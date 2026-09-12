@@ -54,25 +54,21 @@ func run(args []string) error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 
-	logger, err := observability.NewLogger(cfg.LogLevel)
+	runtime, err := observability.Bootstrap(observability.BootstrapConfig{
+		ServiceName:  cfg.OTelServiceName,
+		LogLevel:     cfg.LogLevel,
+		OTLPEndpoint: cfg.OTelEndpoint,
+	})
 	if err != nil {
-		return fmt.Errorf("initialize logging: %w", err)
+		return fmt.Errorf("initialize observability: %w", err)
 	}
-
-	telemetry, err := observability.BootstrapTelemetry(cfg.OTelServiceName)
-	if err != nil {
-		return errors.Join(
-			fmt.Errorf("initialize telemetry: %w", err),
-			logger.Sync(),
-		)
-	}
+	logger := runtime.Logger()
 
 	server, err := api.NewServer(cfg.SocketPath, api.NewRouter())
 	if err != nil {
 		return errors.Join(
 			fmt.Errorf("initialize API server: %w", err),
-			telemetry.Shutdown(context.Background()),
-			logger.Sync(),
+			runtime.Shutdown(context.Background()),
 		)
 	}
 
@@ -86,8 +82,5 @@ func run(args []string) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	return errors.Join(
-		telemetry.Shutdown(shutdownCtx),
-		logger.Sync(),
-	)
+	return runtime.Shutdown(shutdownCtx)
 }
