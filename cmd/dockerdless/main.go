@@ -8,16 +8,35 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
+	"github.com/N3rdBot/dockerdless/internal/adapters/cni"
+	"github.com/N3rdBot/dockerdless/internal/adapters/containerd"
 	"github.com/N3rdBot/dockerdless/internal/api"
+	"github.com/N3rdBot/dockerdless/internal/app"
 	"github.com/N3rdBot/dockerdless/internal/config"
+	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/observability"
+	"github.com/N3rdBot/dockerdless/internal/ports"
+	containerdclient "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
+	"github.com/containerd/errdefs"
+	buildkitclient "github.com/moby/buildkit/client"
 	"go.uber.org/zap"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	shutdownTimeout = 5 * time.Second
+	// sharedContainerdNamespace is the namespace the local BuildKit worker
+	// uses. Images built through BuildKit only become visible to the runtime
+	// store when both adapters share it.
+	sharedContainerdNamespace = "default"
+	// logDirectoryName holds per-container log files beside the socket.
+	logDirectoryName = "dockerdless-logs"
+)
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -64,7 +83,22 @@ func run(args []string) error {
 	}
 	logger := runtime.Logger()
 
-	server, err := api.NewServer(cfg.SocketPath, api.NewRouter())
+	namespace := alignedNamespace(cfg.ContainerdNamespace, logger)
+	service, closeBackends, err := buildService(cfg, logger, namespace)
+	if err != nil {
+		return errors.Join(
+			fmt.Errorf("initialize application: %w", err),
+			runtime.Shutdown(context.Background()),
+		)
+	}
+	defer closeBackends()
+
+	handler := api.NewHandler(api.Dependencies{
+		Service: service,
+		Logger:  logger.Logger,
+	}, logger.Logger)
+
+	server, err := api.NewServer(cfg.SocketPath, handler, api.WithShutdownTimeout(shutdownTimeout))
 	if err != nil {
 		return errors.Join(
 			fmt.Errorf("initialize API server: %w", err),
@@ -75,12 +109,113 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	logger.Info("dockerdless daemon started", zap.String("socket", server.SocketPath()))
-	<-ctx.Done()
+	logger.Info("dockerdless daemon started",
+		zap.String("socket", server.SocketPath()),
+		zap.String("namespace", namespace),
+		zap.String("log_dir", logDirFor(cfg.SocketPath)),
+	)
+	serveErr := server.Run(ctx)
 	logger.Info("dockerdless daemon shutting down")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
+	return errors.Join(serveErr, runtime.Shutdown(shutdownCtx))
+}
 
-	return runtime.Shutdown(shutdownCtx)
+// buildService constructs every adapter and the application service. The
+// returned close function releases the backend clients.
+func buildService(cfg config.Config, logger *observability.Logger, namespace string) (*app.Service, func(), error) {
+	containerdClient, err := containerdclient.New(cfg.ContainerdSocket)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect to containerd at %s: %w", cfg.ContainerdSocket, err)
+	}
+	buildkitClient, err := buildkitclient.New(context.Background(), "unix://"+cfg.BuildKitSocket)
+	if err != nil {
+		_ = containerdClient.Close()
+		return nil, nil, fmt.Errorf("connect to BuildKit at %s: %w", cfg.BuildKitSocket, err)
+	}
+
+	allocator := cni.NewPortAllocator()
+	service, err := app.New(app.Config{
+		Runtime: app.NewRuntimeAdapter(containerd.New(containerdClient, containerd.WithNamespace(namespace))),
+		Images: app.NewImageAdapter(buildkit.New(
+			buildkit.NewContainerdStore(containerdClient, buildkit.StoreConfig{Namespace: namespace}),
+			buildkit.NewBuildkitSolver(buildkitClient),
+			buildkit.Options{Logger: logger.Logger},
+		)),
+		Networks: app.NewNetworkAdapter(cni.New(cni.Config{
+			NetConfDir: cfg.CNIConfigDir,
+			PluginDirs: []string{cfg.CNIPluginDir},
+			Allocator:  allocator,
+		})),
+		Registry:         domain.NewRegistry(),
+		Tasks:            &taskLocator{client: containerdClient, namespace: namespace},
+		Allocator:        app.NewPortAllocator(allocator),
+		StopTimeout:      cfg.DefaultStopTimeout,
+		RequestTimeout:   cfg.RequestTimeout,
+		LogDir:           logDirFor(cfg.SocketPath),
+		Namespace:        namespace,
+		ContainerdSocket: cfg.ContainerdSocket,
+		BuildKitSocket:   cfg.BuildKitSocket,
+		Logger:           logger.Logger,
+	})
+	if err != nil {
+		_ = buildkitClient.Close()
+		_ = containerdClient.Close()
+		return nil, nil, err
+	}
+	return service, func() {
+		service.CloseLogSinks()
+		_ = buildkitClient.Close()
+		_ = containerdClient.Close()
+	}, nil
+}
+
+// alignedNamespace keeps the configured namespace unless it is the built-in
+// default, which does not match the local BuildKit worker.
+func alignedNamespace(configured string, logger *observability.Logger) string {
+	if configured != config.DefaultContainerdNamespace {
+		return configured
+	}
+	logger.Info("aligning containerd namespace with the shared BuildKit worker",
+		zap.String("configured", configured),
+		zap.String("effective", sharedContainerdNamespace))
+	return sharedContainerdNamespace
+}
+
+func logDirFor(socketPath string) string {
+	return filepath.Join(filepath.Dir(socketPath), logDirectoryName)
+}
+
+// taskLocator resolves a running task PID through the containerd client so the
+// CNI adapter can join the container network namespace.
+type taskLocator struct {
+	client    *containerdclient.Client
+	namespace string
+}
+
+func (l *taskLocator) TaskPID(ctx context.Context, id domain.ContainerID) (int, error) {
+	if l == nil || l.client == nil {
+		return 0, fmt.Errorf("%w: containerd client is not configured", ports.ErrServerError)
+	}
+	ctx = namespaces.WithNamespace(ctx, l.namespace)
+	container, err := l.client.LoadContainer(ctx, string(id))
+	if err != nil {
+		return 0, translateLookupError(err)
+	}
+	task, err := container.Task(ctx, nil)
+	if err != nil {
+		return 0, translateLookupError(err)
+	}
+	return int(task.Pid()), nil
+}
+
+func translateLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errdefs.IsNotFound(err) {
+		return fmt.Errorf("%w: container task: %w", ports.ErrNotFound, err)
+	}
+	return fmt.Errorf("%w: container task lookup: %w", ports.ErrServerError, err)
 }

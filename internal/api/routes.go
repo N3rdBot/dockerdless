@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
@@ -17,9 +16,9 @@ type RouteCapability struct {
 // RouteMatrix is the typed capability matrix consumed by the router.
 type RouteMatrix []RouteCapability
 
-// MVPRouteMatrix returns a fresh capability matrix for the supported Docker
-// API surface. Unsupported entries remain explicit so clients receive 501
-// instead of an accidental 404 or a successful no-op.
+// MVPRouteMatrix returns a fresh capability matrix for the MVP Docker API
+// surface with no application service bound. Unsupported entries stay explicit
+// so clients receive 501 instead of an accidental 404 or a successful no-op.
 func MVPRouteMatrix() RouteMatrix {
 	return RouteMatrix{
 		{Method: http.MethodGet, Path: "/_ping", Supported: true, Handler: pingHandler},
@@ -30,6 +29,7 @@ func MVPRouteMatrix() RouteMatrix {
 		{Method: http.MethodGet, Path: "/images/{name}/json"},
 		{Method: http.MethodPost, Path: "/images/create"},
 		{Method: http.MethodGet, Path: "/images/json"},
+		{Method: http.MethodPost, Path: "/build"},
 
 		{Method: http.MethodPost, Path: "/containers/create"},
 		{Method: http.MethodGet, Path: "/containers/json"},
@@ -41,6 +41,7 @@ func MVPRouteMatrix() RouteMatrix {
 		{Method: http.MethodDelete, Path: "/containers/{id}"},
 
 		{Method: http.MethodGet, Path: "/networks"},
+		{Method: http.MethodGet, Path: "/networks/{id}"},
 		{Method: http.MethodPost, Path: "/networks/create"},
 		{Method: http.MethodPost, Path: "/networks/{id}/connect"},
 		{Method: http.MethodDelete, Path: "/networks/{id}"},
@@ -50,33 +51,37 @@ func MVPRouteMatrix() RouteMatrix {
 	}
 }
 
-func pingHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	if r.Method == http.MethodHead {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if _, err := w.Write([]byte("OK")); err != nil {
-		return
-	}
-}
+// serviceRouteMatrix binds the real handlers for every MVP endpoint. Each
+// handler calls the application service; nothing here is a success no-op.
+func serviceRouteMatrix(deps Dependencies) RouteMatrix {
+	handlers := newHandlers(deps)
+	return RouteMatrix{
+		{Method: http.MethodGet, Path: "/_ping", Supported: true, Handler: pingHandler},
+		{Method: http.MethodHead, Path: "/_ping", Supported: true, Handler: pingHandler},
+		{Method: http.MethodGet, Path: "/version", Supported: true, Handler: versionHandler},
+		{Method: http.MethodGet, Path: "/info", Supported: true, Handler: handlers.info},
 
-func versionHandler(w http.ResponseWriter, _ *http.Request) {
-	response := struct {
-		Version    string `json:"Version"`
-		APIVersion string `json:"ApiVersion"`
-	}{
-		Version:    "0.0.0-dev",
-		APIVersion: AdvertisedAPIVersion,
-	}
+		{Method: http.MethodGet, Path: "/images/{name}/json", Supported: true, Handler: handlers.imageInspect},
+		{Method: http.MethodPost, Path: "/images/create", Supported: true, Handler: handlers.imageCreate},
+		{Method: http.MethodGet, Path: "/images/json", Supported: true, Handler: handlers.imageList},
+		{Method: http.MethodPost, Path: "/build", Supported: true, Handler: handlers.build},
 
-	body, err := json.Marshal(response)
-	if err != nil {
-		WriteDockerError(w, NewServerError(err.Error()))
-		return
-	}
-	w.Header().Set("Content-Type", string(jsonMediaType))
-	if _, err := w.Write(append(body, '\n')); err != nil {
-		return
+		{Method: http.MethodPost, Path: "/containers/create", Supported: true, Handler: handlers.containerCreate},
+		{Method: http.MethodGet, Path: "/containers/json", Supported: true, Handler: handlers.containerList},
+		{Method: http.MethodGet, Path: "/containers/{id}/json", Supported: true, Handler: handlers.containerInspect},
+		{Method: http.MethodPost, Path: "/containers/{id}/start", Supported: true, Handler: handlers.containerStart},
+		{Method: http.MethodPost, Path: "/containers/{id}/stop", Supported: true, Handler: handlers.containerStop},
+		{Method: http.MethodGet, Path: "/containers/{id}/logs", Supported: true, Handler: handlers.containerLogs},
+		{Method: http.MethodPost, Path: "/containers/{id}/exec", Supported: true, Handler: handlers.execCreate},
+		{Method: http.MethodDelete, Path: "/containers/{id}", Supported: true, Handler: handlers.containerRemove},
+
+		{Method: http.MethodGet, Path: "/networks", Supported: true, Handler: handlers.networkList},
+		{Method: http.MethodGet, Path: "/networks/{id}", Supported: true, Handler: handlers.networkInspect},
+		{Method: http.MethodPost, Path: "/networks/create", Supported: true, Handler: handlers.networkCreate},
+		{Method: http.MethodPost, Path: "/networks/{id}/connect", Supported: true, Handler: handlers.networkConnect},
+		{Method: http.MethodDelete, Path: "/networks/{id}", Supported: true, Handler: handlers.networkRemove},
+
+		{Method: http.MethodPost, Path: "/exec/{id}/start", Supported: true, Handler: handlers.execStart},
+		{Method: http.MethodGet, Path: "/exec/{id}/json", Supported: true, Handler: handlers.execInspect},
 	}
 }

@@ -2,70 +2,44 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/N3rdBot/dockerdless/internal/observability"
 	dockertypes "github.com/moby/moby/api/types"
-	dockerclient "github.com/moby/moby/client"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.uber.org/zap"
 )
 
 const jsonMediaType dockertypes.MediaType = "application/json"
 
-// Dependencies contains optional clients used by future Docker API handlers.
-// Keeping these dependencies at the HTTP boundary prevents adapters from
-// leaking into the domain model.
-type Dependencies struct {
-	DockerClient *dockerclient.Client
-}
-
-// Server is the API server composition boundary. Socket binding and serving
-// are intentionally deferred until the daemon lifecycle is implemented.
-type Server struct {
-	socketPath string
-	handler    http.Handler
-}
-
-// NewServer validates the API boundary and stores the configured handler.
-func NewServer(socketPath string, handler http.Handler) (*Server, error) {
-	if strings.TrimSpace(socketPath) == "" {
-		return nil, errors.New("API socket path must not be empty")
-	}
-	if handler == nil {
-		return nil, errors.New("API handler must not be nil")
-	}
-
-	return &Server{socketPath: socketPath, handler: handler}, nil
-}
-
-// Handler returns the HTTP handler registered with the server boundary.
-func (s *Server) Handler() http.Handler {
-	if s == nil {
-		return nil
-	}
-	return s.handler
-}
-
-// SocketPath returns the configured Unix socket path.
-func (s *Server) SocketPath() string {
-	if s == nil {
-		return ""
-	}
-	return s.socketPath
-}
-
-// NewRouter creates an instrumented Docker API router with no external
-// clients configured.
+// NewRouter creates an instrumented Docker API router with no application
+// service wired: recognized data endpoints answer 501.
 func NewRouter() http.Handler {
-	return NewRouterWithDependencies(Dependencies{})
+	return NewRouterWithRouteMatrix(MVPRouteMatrix())
 }
 
-// NewRouterWithDependencies creates an instrumented Docker API router.
-func NewRouterWithDependencies(_ Dependencies) http.Handler {
-	return NewRouterWithRouteMatrix(MVPRouteMatrix())
+// NewRouterWithDependencies creates an instrumented Docker API router wired to
+// the supplied application service. A nil service keeps every data endpoint
+// recognized but unimplemented (501) rather than registering a success no-op.
+func NewRouterWithDependencies(deps Dependencies) http.Handler {
+	if deps.Service == nil {
+		return NewRouterWithRouteMatrix(MVPRouteMatrix())
+	}
+	return NewRouterWithRouteMatrix(serviceRouteMatrix(deps))
+}
+
+// NewHandler builds the fully instrumented handler served on the daemon
+// socket: request-id/trace correlation and access logging are outermost, then
+// OpenTelemetry HTTP metrics/spans, then Docker version negotiation, then the
+// route matrix.
+func NewHandler(deps Dependencies, logger *zap.Logger) http.Handler {
+	router := NewRouterWithDependencies(deps)
+	versioned := NewVersionMiddleware().Wrap(router)
+	instrumented := otelhttp.NewHandler(versioned, "dockerdless-api")
+	return observability.Middleware(logger)(instrumented)
 }
 
 // NewRouterWithRouteMatrix creates an instrumented router from a capability
