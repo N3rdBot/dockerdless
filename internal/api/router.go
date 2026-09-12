@@ -2,9 +2,10 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	dockertypes "github.com/moby/moby/api/types"
@@ -64,35 +65,75 @@ func NewRouter() http.Handler {
 
 // NewRouterWithDependencies creates an instrumented Docker API router.
 func NewRouterWithDependencies(_ Dependencies) http.Handler {
-	mux := http.NewServeMux()
-	RegisterDockerRoutes(mux)
-	return otelhttp.NewHandler(mux, "dockerdless-api")
+	return NewRouterWithRouteMatrix(MVPRouteMatrix())
 }
 
-// RegisterDockerRoutes registers the initial Docker API route placeholders.
+// NewRouterWithRouteMatrix creates an instrumented router from a capability
+// matrix. It is the extension point for later handler workstreams.
+func NewRouterWithRouteMatrix(matrix RouteMatrix) http.Handler {
+	if matrix == nil {
+		matrix = MVPRouteMatrix()
+	}
+	router := newDockerRouter(matrix)
+	versioned := NewVersionMiddleware().Wrap(router)
+	return otelhttp.NewHandler(versioned, "dockerdless-api")
+}
+
+// RegisterDockerRoutes registers the currently supported unversioned routes
+// on a standard library ServeMux for backwards-compatible callers.
 func RegisterDockerRoutes(mux *http.ServeMux) {
 	if mux == nil {
 		return
 	}
 
-	mux.HandleFunc("/_ping", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("OK")); err != nil {
+	mux.HandleFunc("/_ping", pingHandler)
+	mux.HandleFunc("/version", versionHandler)
+}
+
+type dockerRouter struct {
+	routes []compiledRoute
+}
+
+type compiledRoute struct {
+	capability RouteCapability
+	pattern    *regexp.Regexp
+}
+
+func newDockerRouter(matrix RouteMatrix) *dockerRouter {
+	routes := make([]compiledRoute, 0, len(matrix))
+	for _, capability := range matrix {
+		routes = append(routes, compiledRoute{
+			capability: capability,
+			pattern:    compileRoutePattern(capability.Path),
+		})
+	}
+	return &dockerRouter{routes: routes}
+}
+
+func (r *dockerRouter) ServeHTTP(w http.ResponseWriter, request *http.Request) {
+	path := unversionedPath(request.URL.Path)
+	for _, route := range r.routes {
+		if route.capability.Method != request.Method || !route.pattern.MatchString(path) {
+			continue
+		}
+		if !route.capability.Supported || route.capability.Handler == nil {
+			WriteDockerError(w, NewNotImplemented(fmt.Sprintf(
+				"endpoint %s %s is not implemented",
+				request.Method,
+				path,
+			)))
 			return
 		}
-	})
-	mux.HandleFunc("/version", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", string(jsonMediaType))
-		response := struct {
-			Version    string `json:"Version"`
-			APIVersion string `json:"ApiVersion"`
-		}{
-			Version:    "0.0.0-dev",
-			APIVersion: "1.0",
-		}
-		if err := json.NewEncoder(w).Encode(response); err != nil {
-			http.Error(w, "failed to encode version response", http.StatusInternalServerError)
-		}
-	})
+		route.capability.Handler(w, request)
+		return
+	}
+
+	WriteDockerError(w, NewNotFound("page not found"))
+}
+
+func compileRoutePattern(path string) *regexp.Regexp {
+	pattern := regexp.QuoteMeta(path)
+	pattern = strings.ReplaceAll(pattern, `\{name\}`, `.+`)
+	pattern = strings.ReplaceAll(pattern, `\{id\}`, `[^/]+`)
+	return regexp.MustCompile("^" + pattern + "$")
 }
