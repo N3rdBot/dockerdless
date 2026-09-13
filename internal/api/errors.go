@@ -108,6 +108,7 @@ func newDockerError(status int, kind ErrorKind, message, fallback string) *Docke
 // dockerMessenger lets an application error carry a Docker-facing message
 // distinct from its wrapped chain.
 type dockerMessenger interface {
+	error
 	DockerMessage() string
 }
 
@@ -123,8 +124,7 @@ func mapServiceError(err error) *DockerError {
 		err = errors.New("")
 	}
 	message := err.Error()
-	var messenger dockerMessenger
-	if errors.As(err, &messenger) {
+	if messenger, ok := errors.AsType[dockerMessenger](err); ok {
 		message = messenger.DockerMessage()
 	}
 	message = cleanServiceMessage(message)
@@ -165,8 +165,7 @@ func serviceMessage(err error) string {
 	if err == nil {
 		return ""
 	}
-	var messenger dockerMessenger
-	if errors.As(err, &messenger) {
+	if messenger, ok := errors.AsType[dockerMessenger](err); ok {
 		return cleanServiceMessage(messenger.DockerMessage())
 	}
 	return cleanServiceMessage(err.Error())

@@ -71,8 +71,10 @@ func seedContainer(t *testing.T, service *Service, id domain.ContainerID, name s
 }
 
 func dockerMessage(err error) string {
-	var messenger interface{ DockerMessage() string }
-	if errors.As(err, &messenger) {
+	if messenger, ok := errors.AsType[interface {
+		error
+		DockerMessage() string
+	}](err); ok {
 		return messenger.DockerMessage()
 	}
 	return err.Error()
