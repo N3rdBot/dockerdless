@@ -32,6 +32,7 @@ func TestTestcontainersGoCompatibilityMatrix(t *testing.T) {
 	t.Run("ImagePull", func(t *testing.T) { compatImagePull(t, daemon) })
 	t.Run("ImageInspectConfig", func(t *testing.T) { compatImageInspectConfig(t, daemon) })
 	t.Run("ContainerWithoutExposedPorts", func(t *testing.T) { compatContainerWithoutExposedPorts(t, daemon) })
+	t.Run("PrivilegedCreateRejected", func(t *testing.T) { compatPrivilegedCreateRejected(t, daemon) })
 	t.Run("BuildPublishedPortsAndWaitForHTTP", func(t *testing.T) { compatBuildPublishedPortsAndWaitForHTTP(t, daemon) })
 	t.Run("WaitForExecAndExitCodes", func(t *testing.T) { compatWaitForExecAndExitCodes(t, daemon) })
 	t.Run("NetworkCreateInspectListRemove", func(t *testing.T) { compatNetworkCreateInspectListRemove(t, daemon) })

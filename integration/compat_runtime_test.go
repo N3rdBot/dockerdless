@@ -9,11 +9,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
+
+func compatPrivilegedCreateRejected(t *testing.T, daemon *daemonProcess) {
+	configureTestcontainers(t, daemon)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := daemon.Client().ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:     &container.Config{Image: "alpine:latest"},
+		HostConfig: &container.HostConfig{Privileged: true},
+	})
+	if err == nil {
+		t.Fatal("privileged container create unexpectedly succeeded")
+	}
+	if !strings.Contains(err.Error(), "HostConfig.Privileged is not supported") {
+		t.Fatalf("privileged create error = %v, want Docker unsupported-field message", err)
+	}
+}
 
 // compatWaitForExecAndExitCodes proves the exec route end to end through
 // testcontainers' wait.ForExec, a nonzero exit code, and a failing wait

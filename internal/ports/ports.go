@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/N3rdBot/dockerdless/internal/domain"
-	"go.uber.org/zap/zapcore"
 )
 
 // Runtime controls container lifecycle operations.
@@ -66,29 +65,13 @@ const LabelTTY = "io.dockerdless.tty"
 
 // RegistryAuth carries Docker registry credentials in a transport-neutral
 // shape. It is converted to the BuildKit adapter's redacting type at the
-// application boundary and is never logged. MarshalLogObject is a defensive
-// backstop: even an accidental zap.Any of the raw transport value records only
-// presence flags, never credential material.
+// application boundary and is never logged.
 type RegistryAuth struct {
 	Username      string
 	Password      string
 	IdentityToken string
 	RegistryToken string
 	ServerAddress string
-}
-
-// MarshalLogObject implements zapcore.ObjectMarshaler with every secret
-// redacted.
-func (a *RegistryAuth) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
-	if a == nil {
-		return nil
-	}
-	encoder.AddString("auth_server_address", a.ServerAddress)
-	encoder.AddBool("auth_username_set", a.Username != "")
-	encoder.AddBool("auth_password_set", a.Password != "")
-	encoder.AddBool("auth_identity_token_set", a.IdentityToken != "")
-	encoder.AddBool("auth_registry_token_set", a.RegistryToken != "")
-	return nil
 }
 
 // PullRequest configures one image pull.

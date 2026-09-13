@@ -11,6 +11,7 @@ import (
 
 	"github.com/N3rdBot/dockerdless/internal/ports"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
 )
 
@@ -18,6 +19,26 @@ const (
 	leakTestPassword = "hunter2-not-a-real-secret"
 	leakTestToken    = "s3cr3t-refresh-token"
 )
+
+type redactedRegistryAuth struct {
+	auth *ports.RegistryAuth
+}
+
+func redactRegistryAuth(auth *ports.RegistryAuth) zapcore.ObjectMarshaler {
+	return redactedRegistryAuth{auth: auth}
+}
+
+func (a redactedRegistryAuth) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
+	if a.auth == nil {
+		return nil
+	}
+	encoder.AddString("auth_server_address", a.auth.ServerAddress)
+	encoder.AddBool("auth_username_set", a.auth.Username != "")
+	encoder.AddBool("auth_password_set", a.auth.Password != "")
+	encoder.AddBool("auth_identity_token_set", a.auth.IdentityToken != "")
+	encoder.AddBool("auth_registry_token_set", a.auth.RegistryToken != "")
+	return nil
+}
 
 // TestRegistryAuthNeverAppearsInResponsesOrLogs proves the HTTP boundary does
 // not echo the X-Registry-Auth header: a request carrying credentials produces
@@ -74,7 +95,7 @@ func TestRegistryAuthCannotReachZapRecords(t *testing.T) {
 		IdentityToken: leakTestToken,
 		ServerAddress: "registry.example.test",
 	}
-	logger.Info("pull request", zap.Any("auth", auth))
+	logger.Info("pull request", zap.Object("auth", redactRegistryAuth(auth)))
 
 	records := observed.FilterMessage("pull request").All()
 	if len(records) != 1 {

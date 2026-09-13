@@ -38,8 +38,7 @@ func NewRouterWithDependencies(deps Dependencies) http.Handler {
 func NewHandler(deps Dependencies, logger *zap.Logger) http.Handler {
 	router := NewRouterWithDependencies(deps)
 	versioned := NewVersionMiddleware().Wrap(router)
-	instrumented := otelhttp.NewHandler(versioned, "dockerdless-api")
-	return observability.Middleware(logger)(instrumented)
+	return observability.Middleware(logger)(versioned)
 }
 
 // NewRouterWithRouteMatrix creates an instrumented router from a capability

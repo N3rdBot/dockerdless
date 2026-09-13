@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +33,15 @@ func (h *handlers) containerCreate(w http.ResponseWriter, r *http.Request) {
 		WriteDockerError(w, NewInvalidParameter("Config is required"))
 		return
 	}
+	if apiErr := validateContainerCreate(&payload); apiErr != nil {
+		WriteDockerError(w, apiErr)
+		return
+	}
+	portBindings, apiErr := requestedPortBindings(payload.HostConfig)
+	if apiErr != nil {
+		WriteDockerError(w, apiErr)
+		return
+	}
 	result, err := h.service.ContainerCreate(r.Context(), ports.ContainerCreateRequest{
 		Name:         r.URL.Query().Get("name"),
 		Image:        payload.Image,
@@ -44,7 +55,7 @@ func (h *handlers) containerCreate(w http.ResponseWriter, r *http.Request) {
 		TTY:          payload.Tty,
 		OpenStdin:    payload.OpenStdin,
 		NetworkMode:  requestedNetworkMode(&payload),
-		PortBindings: requestedPortBindings(payload.HostConfig),
+		PortBindings: portBindings,
 		Mounts:       requestedMounts(payload.HostConfig),
 	})
 	if err != nil {
@@ -55,6 +66,32 @@ func (h *handlers) containerCreate(w http.ResponseWriter, r *http.Request) {
 		ID:       string(result.ID),
 		Warnings: result.Warnings,
 	})
+}
+
+func validateContainerCreate(payload *container.CreateRequest) *DockerError {
+	if payload == nil || payload.HostConfig == nil {
+		return nil
+	}
+	hostConfig := payload.HostConfig
+	switch {
+	case hostConfig.Privileged:
+		return NewNotImplemented("HostConfig.Privileged is not supported")
+	case len(hostConfig.CapAdd) > 0:
+		return NewNotImplemented("HostConfig.CapAdd is not supported")
+	case len(hostConfig.CapDrop) > 0:
+		return NewNotImplemented("HostConfig.CapDrop is not supported")
+	case len(hostConfig.Devices) > 0:
+		return NewNotImplemented("HostConfig.Devices is not supported")
+	case hostConfig.ReadonlyRootfs:
+		return NewNotImplemented("HostConfig.ReadonlyRootfs is not supported")
+	case !reflect.DeepEqual(hostConfig.Resources, container.Resources{}):
+		return NewNotImplemented("HostConfig.Resources is not supported")
+	case hostConfig.RestartPolicy.Name != "" || hostConfig.RestartPolicy.MaximumRetryCount != 0:
+		return NewNotImplemented("HostConfig.RestartPolicy is not supported")
+	case len(hostConfig.SecurityOpt) > 0:
+		return NewNotImplemented("HostConfig.SecurityOpt is not supported")
+	}
+	return nil
 }
 
 func (h *handlers) containerList(w http.ResponseWriter, r *http.Request) {
@@ -174,9 +211,9 @@ func requestedNetworkMode(payload *container.CreateRequest) string {
 	return ""
 }
 
-func requestedPortBindings(hostConfig *container.HostConfig) []domain.PortBinding {
+func requestedPortBindings(hostConfig *container.HostConfig) ([]domain.PortBinding, *DockerError) {
 	if hostConfig == nil || len(hostConfig.PortBindings) == 0 {
-		return nil
+		return nil, nil
 	}
 	bindings := make([]domain.PortBinding, 0, len(hostConfig.PortBindings))
 	for port, list := range hostConfig.PortBindings {
@@ -185,7 +222,7 @@ func requestedPortBindings(hostConfig *container.HostConfig) []domain.PortBindin
 			if binding.HostPort != "" {
 				parsed, err := strconv.Atoi(binding.HostPort)
 				if err != nil || parsed < 0 || parsed > 65535 {
-					continue
+					return nil, NewInvalidParameter("HostConfig.PortBindings contains an invalid HostPort")
 				}
 				hostPort = parsed
 			}
@@ -207,7 +244,7 @@ func requestedPortBindings(hostConfig *container.HostConfig) []domain.PortBindin
 		}
 		return bindings[i].HostPort < bindings[j].HostPort
 	})
-	return bindings
+	return bindings, nil
 }
 
 func requestedMounts(hostConfig *container.HostConfig) []ports.Mount {
@@ -222,7 +259,7 @@ func requestedMounts(hostConfig *container.HostConfig) []ports.Mount {
 		}
 		mount := ports.Mount{Type: "bind", Source: parts[0], Destination: parts[1]}
 		if len(parts) >= 3 {
-			for _, option := range strings.Split(parts[2], ",") {
+			for option := range strings.SplitSeq(parts[2], ",") {
 				switch strings.ToLower(strings.TrimSpace(option)) {
 				case "ro":
 					mount.ReadOnly = true
@@ -346,12 +383,7 @@ func matchesContainerFilters(r *http.Request, item domain.Container) bool {
 func matchesNameFilter(pattern string, item domain.Container) bool {
 	targets := []string{item.Name, "/" + item.Name, string(item.ID)}
 	if compiled, err := regexp.Compile(pattern); err == nil {
-		for _, target := range targets {
-			if compiled.MatchString(target) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(targets, compiled.MatchString)
 	}
 	for _, target := range targets {
 		if strings.Contains(target, pattern) {

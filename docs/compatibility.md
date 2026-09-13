@@ -60,6 +60,54 @@ The typed Go response always has a non-nil `ExposedPorts` set. On the wire an
 empty set is omitted by the image-config JSON tags, exactly like Docker's
 envelope; a client that ranges over the decoded map is safe either way.
 
+## Container create field policy
+
+The daemon rejects unsupported security and lifecycle semantics with HTTP 501
+(`{"message":"..."}`). `501 Not Implemented` is used rather than translating
+or silently dropping a request: the client explicitly asked for behavior this
+MVP cannot honor, and a successful create would falsely imply that the policy
+was applied.
+
+### Rejected create fields
+
+These fields are rejected before provisioning whenever their value requests
+non-default behavior:
+
+| Docker field | Exact client error | Reason |
+| --- | --- | --- |
+| `HostConfig.Privileged=true` | `501 HostConfig.Privileged is not supported` | The daemon cannot provide privileged isolation semantics. |
+| `HostConfig.CapAdd` non-empty | `501 HostConfig.CapAdd is not supported` | Linux capability changes are not applied. |
+| `HostConfig.CapDrop` non-empty | `501 HostConfig.CapDrop is not supported` | Linux capability changes are not applied. |
+| `HostConfig.Devices` non-empty | `501 HostConfig.Devices is not supported` | Device mappings are not applied. |
+| `HostConfig.ReadonlyRootfs=true` | `501 HostConfig.ReadonlyRootfs is not supported` | Root filesystem mutability cannot be changed. |
+| `HostConfig` resource limits non-zero | `501 HostConfig.Resources is not supported` | CPU, memory, cgroup, device, and ulimit settings are not applied. |
+| `HostConfig.RestartPolicy` non-default | `501 HostConfig.RestartPolicy is not supported` | The MVP has no restart supervisor. |
+| `HostConfig.SecurityOpt` non-empty | `501 HostConfig.SecurityOpt is not supported` | Security labels and profiles are not applied. |
+
+### Ignored create fields
+
+The following fields are accepted and harmlessly ignored because they do not
+change the container semantics implemented by this MVP. They are listed here
+so their omission is explicit rather than silent:
+
+| Docker field | Compatibility behavior |
+| --- | --- |
+| `HostConfig.AutoRemove` | Container cleanup remains controlled by the remove endpoint. |
+| `HostConfig.Init` | No init process is injected. |
+| `HostConfig.LogConfig` | Logs remain CRI text files. |
+| `HostConfig.Binds` entries with malformed syntax | The malformed entry is skipped; valid bind entries are honored. |
+| `HostConfig.Tmpfs` | Tmpfs mounts are not created. |
+| `HostConfig.PublishAllPorts` | Only explicit `PortBindings` are published. |
+| `HostConfig.DNS`, `DNSOptions`, `DNSSearch` | Container DNS overrides are not applied. |
+| `HostConfig.ExtraHosts` | Extra host entries are not applied. |
+| `HostConfig.GroupAdd` | Supplementary groups are not added. |
+| `HostConfig.ShmSize` | The default runtime shared-memory configuration is retained. |
+| `NetworkingConfig.EndpointsConfig` after the first requested network | Multi-network attachment is unsupported; one network is selected. |
+
+`/version` and `/info` report `0.0.0-dev` as the intentional development
+version string. `/info` reports `LoggingDriver: "cri"` because the daemon
+writes CRI-format text log files, not Docker `json-file` records.
+
 ## Published ports
 
 The port allocator reserves a concrete, nonzero host port at container create

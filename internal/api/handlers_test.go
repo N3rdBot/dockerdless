@@ -69,6 +69,79 @@ func TestHandlers_containerCreateWiresRequestAndReturns201(t *testing.T) {
 	}
 }
 
+func TestHandlers_containerCreateRejectsPrivileged(t *testing.T) {
+	service := &fakeService{create: func(context.Context, ports.ContainerCreateRequest) (ports.ContainerCreateResult, error) {
+		t.Fatal("container service must not be called for unsupported privileged create")
+		return ports.ContainerCreateResult{}, nil
+	}}
+	handler := NewRouterWithDependencies(Dependencies{Service: service})
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(`{"Image":"alpine:latest","HostConfig":{"Privileged":true}}`)))
+
+	if recorder.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := strings.TrimSpace(recorder.Body.String()); got != `{"message":"HostConfig.Privileged is not supported"}` {
+		t.Fatalf("unexpected Docker error body %s", got)
+	}
+}
+
+func TestHandlers_containerCreateRejectsUnsupportedFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		field   string
+		message string
+	}{
+		{name: "cap add", field: `"CapAdd":["SYS_ADMIN"]`, message: "HostConfig.CapAdd is not supported"},
+		{name: "cap drop", field: `"CapDrop":["MKNOD"]`, message: "HostConfig.CapDrop is not supported"},
+		{name: "devices", field: `"Devices":[{"PathOnHost":"/dev/null","PathInContainer":"/dev/null","CgroupPermissions":"rwm"}]`, message: "HostConfig.Devices is not supported"},
+		{name: "readonly rootfs", field: `"ReadonlyRootfs":true`, message: "HostConfig.ReadonlyRootfs is not supported"},
+		{name: "resources", field: `"Memory":1`, message: "HostConfig.Resources is not supported"},
+		{name: "restart policy", field: `"RestartPolicy":{"Name":"always"}`, message: "HostConfig.RestartPolicy is not supported"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &fakeService{create: func(context.Context, ports.ContainerCreateRequest) (ports.ContainerCreateResult, error) {
+				t.Fatal("container service must not be called for unsupported create field")
+				return ports.ContainerCreateResult{}, nil
+			}}
+			handler := NewRouterWithDependencies(Dependencies{Service: service})
+			recorder := httptest.NewRecorder()
+			body := `{"Image":"alpine:latest","HostConfig":{` + tt.field + `}}`
+
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+
+			if recorder.Code != http.StatusNotImplemented {
+				t.Fatalf("expected 501, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+			want := `{"message":"` + tt.message + `"}`
+			if got := strings.TrimSpace(recorder.Body.String()); got != want {
+				t.Fatalf("unexpected Docker error body %s", got)
+			}
+		})
+	}
+}
+
+func TestHandlers_containerCreateRejectsInvalidHostPort(t *testing.T) {
+	service := &fakeService{create: func(context.Context, ports.ContainerCreateRequest) (ports.ContainerCreateResult, error) {
+		t.Fatal("container service must not be called for invalid host port")
+		return ports.ContainerCreateResult{}, nil
+	}}
+	handler := NewRouterWithDependencies(Dependencies{Service: service})
+	recorder := httptest.NewRecorder()
+	body := `{"Image":"alpine:latest","HostConfig":{"PortBindings":{"80/tcp":[{"HostPort":"not-a-port"}]}}}`
+
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := strings.TrimSpace(recorder.Body.String()); got != `{"message":"HostConfig.PortBindings contains an invalid HostPort"}` {
+		t.Fatalf("unexpected Docker error body %s", got)
+	}
+}
+
 func TestHandlers_containerInspectMapsStateNetworkingAndFiltersInternalLabels(t *testing.T) {
 	item := domain.Container{
 		ID:             "c1",
@@ -364,6 +437,9 @@ func TestHandlers_pingAndVersionAndInfo(t *testing.T) {
 	}
 	if info.Containers != 2 || info.ContainersRunning != 1 || info.Images != 3 {
 		t.Fatalf("unexpected info counters %+v", info)
+	}
+	if info.LoggingDriver != "cri" {
+		t.Fatalf("expected CRI logging driver, got %q", info.LoggingDriver)
 	}
 	if info.Containerd == nil || info.Containerd.Namespaces.Containers != "default" {
 		t.Fatalf("expected containerd namespace in info, got %+v", info.Containerd)

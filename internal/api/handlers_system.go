@@ -75,7 +75,7 @@ func (h *handlers) info(w http.ResponseWriter, r *http.Request) {
 		KernelVersion:      kernelVersion(),
 		NCPU:               runtime.NumCPU(),
 		MemTotal:           memTotal(),
-		LoggingDriver:      "json-file",
+		LoggingDriver:      "cri",
 		IndexServerAddress: "https://index.docker.io/v1/",
 		Runtimes:           map[string]system.RuntimeWithStatus{"io.containerd.runc.v2": {}},
 		DefaultRuntime:     "io.containerd.runc.v2",
