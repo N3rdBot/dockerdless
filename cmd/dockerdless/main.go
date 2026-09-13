@@ -68,10 +68,14 @@ func run(args []string) error {
 		return nil
 	}
 
-	cfg, err := config.Load()
+	configStore, err := loadConfigStore()
 	if err != nil {
-		return fmt.Errorf("load configuration: %w", err)
+		return err
 	}
+	defer func() {
+		_ = configStore.Close()
+	}()
+	cfg := configStore.Current()
 
 	runtime, err := observability.Bootstrap(observability.BootstrapConfig{
 		ServiceName:  cfg.OTelServiceName,
@@ -82,9 +86,16 @@ func run(args []string) error {
 		return fmt.Errorf("initialize observability: %w", err)
 	}
 	logger := runtime.Logger()
+	stopConfigReload := wireConfigReload(configStore, logger)
+	defer stopConfigReload()
+	if configFileConfigured() {
+		if err := configStore.WatchConfig(); err != nil {
+			return errors.Join(fmt.Errorf("watch configuration: %w", err), runtime.Shutdown(context.Background()))
+		}
+	}
 
 	namespace := alignedNamespace(cfg.ContainerdNamespace, logger)
-	service, closeBackends, err := buildService(cfg, logger, namespace)
+	service, registry, containerdClient, closeBackends, err := buildService(cfg, logger, namespace)
 	if err != nil {
 		return errors.Join(
 			fmt.Errorf("initialize application: %w", err),
@@ -92,6 +103,11 @@ func run(args []string) error {
 		)
 	}
 	defer closeBackends()
+	if err := reconcileAtStartup(context.Background(), registry, logger, func(ctx context.Context) ([]domain.Container, []domain.TaskSnapshot, error) {
+		return loadContainerdSnapshot(ctx, containerdClient, namespace)
+	}); err != nil {
+		logger.Warn("container state reconciliation failed; starting with an empty registry", zap.Error(err))
+	}
 
 	handler := api.NewHandler(api.Dependencies{
 		Service: service,
@@ -127,18 +143,19 @@ func run(args []string) error {
 
 // buildService constructs every adapter and the application service. The
 // returned close function releases the backend clients.
-func buildService(cfg config.Config, logger *observability.Logger, namespace string) (*app.Service, func(), error) {
+func buildService(cfg config.Config, logger *observability.Logger, namespace string) (*app.Service, *domain.Registry, *containerdclient.Client, func(), error) {
 	containerdClient, err := containerdclient.New(cfg.ContainerdSocket)
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect to containerd at %s: %w", cfg.ContainerdSocket, err)
+		return nil, nil, nil, nil, fmt.Errorf("connect to containerd at %s: %w", cfg.ContainerdSocket, err)
 	}
 	buildkitClient, err := buildkitclient.New(context.Background(), "unix://"+cfg.BuildKitSocket)
 	if err != nil {
 		_ = containerdClient.Close()
-		return nil, nil, fmt.Errorf("connect to BuildKit at %s: %w", cfg.BuildKitSocket, err)
+		return nil, nil, nil, nil, fmt.Errorf("connect to BuildKit at %s: %w", cfg.BuildKitSocket, err)
 	}
 
 	allocator := cni.NewPortAllocator()
+	registry := domain.NewRegistry()
 	service, err := app.New(app.Config{
 		Runtime: app.NewRuntimeAdapter(containerd.New(containerdClient, containerd.WithNamespace(namespace))),
 		Images: app.NewImageAdapter(buildkit.New(
@@ -151,7 +168,7 @@ func buildService(cfg config.Config, logger *observability.Logger, namespace str
 			PluginDirs: []string{cfg.CNIPluginDir},
 			Allocator:  allocator,
 		})),
-		Registry:         domain.NewRegistry(),
+		Registry:         registry,
 		Tasks:            &taskLocator{client: containerdClient, namespace: namespace},
 		Allocator:        app.NewPortAllocator(allocator),
 		StopTimeout:      cfg.DefaultStopTimeout,
@@ -165,9 +182,9 @@ func buildService(cfg config.Config, logger *observability.Logger, namespace str
 	if err != nil {
 		_ = buildkitClient.Close()
 		_ = containerdClient.Close()
-		return nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	return service, func() {
+	return service, registry, containerdClient, func() {
 		service.CloseLogSinks()
 		_ = buildkitClient.Close()
 		_ = containerdClient.Close()

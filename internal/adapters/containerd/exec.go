@@ -137,6 +137,16 @@ func (a *Adapter) Exec(ctx context.Context, id domain.ContainerID, cfg ExecConfi
 	}
 	select {
 	case <-ctx.Done():
+		cleanupCtx := context.WithoutCancel(ctx)
+		_ = process.CloseIO(cleanupCtx)
+		if exit, deleteErr := process.Delete(cleanupCtx); deleteErr == nil {
+			if code, finishedAt, resultErr := exit.Result(); resultErr == nil {
+				exitCode := int(code)
+				result.ExitCode = &exitCode
+				result.FinishedAt = finishedAt
+			}
+		}
+		a.recordExec(newExecRecord(id, result, cfg, false))
 		return ExecResult{}, ctx.Err()
 	case exit, ok := <-exitCh:
 		if !ok {

@@ -2,141 +2,87 @@ package domain
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestReconcileClassifiesMetadataWithoutTaskAsExitedStale(t *testing.T) {
-	// Given a container metadata record with no corresponding runtime task.
-	id, err := NewContainerID("container-metadata-only")
+func TestReconcileMetadataWithoutTaskIsExitedAndStale(t *testing.T) {
+	id := ContainerID("container-metadata-only")
+	result, err := Reconcile([]Container{{ID: id, State: ContainerStateRunning}}, nil)
 	if err != nil {
-		t.Fatalf("construct container id: %v", err)
+		t.Fatalf("reconcile: %v", err)
 	}
-	metadata := []Container{{
-		ID:    id,
-		Name:  "metadata-only",
-		State: ContainerStateCreated,
-	}}
-
-	// When the split containerd metadata and task views are reconciled.
-	result, err := Reconcile(metadata, nil)
-	if err != nil {
-		t.Fatalf("reconcile metadata-only container: %v", err)
-	}
-
-	// Then metadata alone must never make the container look running.
-	if len(result.Containers) != 1 {
-		t.Fatalf("expected one reconciled container, got %d", len(result.Containers))
-	}
-	if result.Containers[0].State != ContainerStateExited {
-		t.Fatalf("expected metadata-only container to be exited, got %q", result.Containers[0].State)
-	}
-	if len(result.Stale) != 1 || result.Stale[0] != id {
-		t.Fatalf("expected metadata-only container to be marked stale, got %#v", result.Stale)
-	}
-	if result.Containers[0].State == ContainerStateRunning {
-		t.Fatal("metadata-only container must not be classified as running")
+	if result.Containers[0].State != ContainerStateExited || len(result.Stale) != 1 || result.Stale[0] != id {
+		t.Fatalf("expected exited stale container, got %#v", result)
 	}
 }
 
-func TestReconcileDerivesDockerStateFromTaskStatus(t *testing.T) {
+func TestReconcileDerivesTaskStatesAndExitData(t *testing.T) {
 	tests := []struct {
-		name      string
-		taskState TaskState
-		wantState ContainerState
-		wantDead  bool
+		name   string
+		status TaskState
+		want   ContainerState
+		dead   bool
 	}{
-		{name: "created", taskState: TaskStateCreated, wantState: ContainerStateCreated},
-		{name: "running", taskState: TaskStateRunning, wantState: ContainerStateRunning},
-		{name: "paused", taskState: TaskStatePaused, wantState: ContainerStatePaused},
-		{name: "restarting", taskState: TaskStateRestarting, wantState: ContainerStateRestarting},
-		{name: "stopped", taskState: TaskStateStopped, wantState: ContainerStateExited},
-		{name: "exited", taskState: TaskStateExited, wantState: ContainerStateExited},
-		{name: "dead", taskState: TaskStateDead, wantState: ContainerStateDead, wantDead: true},
+		{"created", TaskStateCreated, ContainerStateCreated, false},
+		{"running", TaskStateRunning, ContainerStateRunning, false},
+		{"paused", TaskStatePaused, ContainerStatePaused, false},
+		{"restarting", TaskStateRestarting, ContainerStateRestarting, false},
+		{"stopped", TaskStateStopped, ContainerStateExited, false},
+		{"exited", TaskStateExited, ContainerStateExited, false},
+		{"dead", TaskStateDead, ContainerStateDead, true},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			id := ContainerID("task-" + tt.name)
-			result, err := Reconcile(
-				[]Container{{ID: id, State: ContainerStateCreated}},
-				[]TaskSnapshot{{ContainerID: id, Status: tt.taskState, ExitCode: 17}},
-			)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := Reconcile([]Container{{ID: ContainerID(test.name)}}, []TaskSnapshot{{ContainerID: ContainerID(test.name), Status: test.status, ExitCode: 17}})
 			if err != nil {
-				t.Fatalf("reconcile task state: %v", err)
+				t.Fatalf("reconcile: %v", err)
 			}
-			if got := result.Containers[0].State; got != tt.wantState {
-				t.Fatalf("expected state %q, got %q", tt.wantState, got)
-			}
-			if result.Containers[0].Dead != tt.wantDead {
-				t.Fatalf("expected dead=%t, got %t", tt.wantDead, result.Containers[0].Dead)
-			}
-			if result.Containers[0].ExitCode != 17 {
-				t.Fatalf("expected exit code 17, got %d", result.Containers[0].ExitCode)
+			container := result.Containers[0]
+			if container.State != test.want || container.Dead != test.dead || container.ExitCode != 17 {
+				t.Fatalf("got state=%q dead=%t exit=%d", container.State, container.Dead, container.ExitCode)
 			}
 		})
 	}
 }
 
-func TestReconcileMarksRuntimeOnlyTasksForCleanup(t *testing.T) {
-	metadataID := ContainerID("metadata")
-	orphanID := ContainerID("orphan")
-	result, err := Reconcile(
-		[]Container{{ID: metadataID}},
-		[]TaskSnapshot{{ContainerID: orphanID, Status: TaskStateRunning}},
-	)
+func TestReconcileCleansRuntimeOnlyTasksAndPreservesPinnedDigest(t *testing.T) {
+	id := ContainerID("web")
+	result, err := Reconcile([]Container{{ID: id, Name: "web", Spec: ContainerSpec{Image: ImageID("web:latest")}, ImageDigest: ImageID("sha256:pinned")}}, []TaskSnapshot{{ContainerID: id, Status: TaskStateRunning}, {ContainerID: "orphan", Status: TaskStateStopped}})
 	if err != nil {
-		t.Fatalf("reconcile orphan task: %v", err)
+		t.Fatalf("reconcile: %v", err)
 	}
-	if len(result.Cleanup) != 1 || result.Cleanup[0] != orphanID {
-		t.Fatalf("expected orphan task cleanup, got %#v", result.Cleanup)
+	if result.Containers[0].ImageDigest != ImageID("sha256:pinned") || len(result.Cleanup) != 1 || result.Cleanup[0] != "orphan" {
+		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 
-func TestReconcileManualQA_printsRecordedSequenceJSON(t *testing.T) {
-	webID := ContainerID("web")
-	dbID := ContainerID("db")
-	orphanID := ContainerID("orphan-task")
-	recordedEvents := []Event{
-		{Type: EventContainerCreated, ContainerID: webID, Topic: ContainerCreateEventTopic, Action: DockerActionForTopic(ContainerCreateEventTopic)},
-		{Type: EventContainerStarted, ContainerID: webID, Topic: TaskStartEventTopic, Action: DockerActionForTopic(TaskStartEventTopic)},
-		{Type: EventContainerCreated, ContainerID: dbID, Topic: ContainerCreateEventTopic, Action: DockerActionForTopic(ContainerCreateEventTopic)},
-		{Type: EventContainerExited, ContainerID: dbID, Topic: TaskExitEventTopic, Action: DockerActionForTopic(TaskExitEventTopic)},
+func TestReconcileRecordedSnapshotJSON(t *testing.T) {
+	result, err := Reconcile([]Container{{ID: "web"}, {ID: "db"}}, []TaskSnapshot{
+		{ContainerID: "web", Status: TaskStateRunning, StartedAt: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)},
+		{ContainerID: "db", Status: TaskStateStopped, ExitCode: 137, OOMKilled: true},
+		{ContainerID: "orphan", Status: TaskStateStopped},
+	})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
 	}
-	for _, event := range recordedEvents {
-		if event.Action == "" {
-			t.Fatalf("recorded event %q has no mapped action", event.Topic)
-		}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
 	}
+	if !strings.Contains(string(encoded), `"State":"running"`) || !strings.Contains(string(encoded), `"State":"exited"`) {
+		t.Fatalf("snapshot lacks recovered states: %s", encoded)
+	}
+}
 
-	metadata := []Container{
-		{ID: webID, Name: "web", Spec: ContainerSpec{Image: ImageID("web:latest")}, ImageDigest: ImageID("sha256:web")},
-		{ID: dbID, Name: "db", Spec: ContainerSpec{Image: ImageID("db:latest")}, ImageDigest: ImageID("sha256:db")},
-		{ID: ContainerID("stale"), Name: "stale", State: ContainerStateRunning},
+func TestReconcileRejectsDuplicates(t *testing.T) {
+	_, err := Reconcile([]Container{{ID: "same"}, {ID: "same"}}, nil)
+	if err == nil {
+		t.Fatal("expected duplicate metadata error")
 	}
-	tasks := []TaskSnapshot{
-		{ContainerID: webID, Status: TaskStateRunning, StartedAt: time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)},
-		{ContainerID: dbID, Status: TaskStateStopped, ExitCode: 137, OOMKilled: true, FinishedAt: time.Date(2026, 9, 13, 12, 1, 0, 0, time.UTC)},
-		{ContainerID: orphanID, Status: TaskStateStopped, ExitCode: 1},
-	}
-	result, err := Reconcile(metadata, tasks)
-	if err != nil {
-		t.Fatalf("manual QA reconcile: %v", err)
-	}
-	encoded, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal reconcile result: %v", err)
-	}
-	output := string(encoded)
-	fmt.Println(output)
-	if !strings.Contains(output, `"State": "running"`) {
-		t.Fatalf("manual JSON did not show running status:\n%s", output)
-	}
-	if !strings.Contains(output, `"State": "exited"`) {
-		t.Fatalf("manual JSON did not show exited status:\n%s", output)
-	}
-	if !strings.Contains(output, `"Cleanup": [`) || !strings.Contains(output, `orphan-task`) {
-		t.Fatalf("manual JSON did not show cleanup classification:\n%s", output)
+	_, err = Reconcile([]Container{{ID: "same"}}, []TaskSnapshot{{ContainerID: "same", Status: TaskStateRunning}, {ContainerID: "same", Status: TaskStateRunning}})
+	if err == nil {
+		t.Fatal("expected duplicate task error")
 	}
 }

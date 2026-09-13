@@ -482,6 +482,38 @@ func TestExecCreatesStartsWaitsAndRecordsExitCode(t *testing.T) {
 	assertCallOrder(t, fake.callLog(), "ProcessWait(", "ProcessStart(")
 }
 
+func TestExecCancellationCleansUpAndRecordsProcess(t *testing.T) {
+	adapter, fake := newTestAdapter(t)
+	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	task.setNextProcess(fakeProcessTemplate{exitOnStart: false})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := adapter.Exec(ctx, id, ExecConfig{Command: []string{"sleep", "30"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Exec cancellation error = %v, want context.Canceled", err)
+	}
+	calls := fake.callLog()
+	assertCallOrder(t, calls, "ProcessCloseIO(", "ProcessDelete(")
+
+	var processID string
+	for _, call := range calls {
+		if strings.HasPrefix(call, "TaskExec(") {
+			processID = strings.TrimSuffix(strings.Split(call, ",")[1], ")")
+		}
+	}
+	if processID == "" {
+		t.Fatal("cancelled exec was not created")
+	}
+	record, ok := adapter.ExecRecord(processID)
+	if !ok {
+		t.Fatalf("cancelled exec %q was not recorded", processID)
+	}
+	if record.Running || !record.CanRemove {
+		t.Fatalf("cancelled exec record = %#v, want stopped and removable", record)
+	}
+}
+
 func TestExecResizesTTYProcess(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
 	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})

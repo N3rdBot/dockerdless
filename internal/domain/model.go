@@ -186,7 +186,7 @@ type Event struct {
 	Type        EventType
 	ContainerID ContainerID
 	Topic       string
-	Action      DockerEventAction
+	Action      string
 	OccurredAt  time.Time
 	Metadata    map[string]string
 }

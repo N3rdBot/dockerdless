@@ -33,8 +33,44 @@ Exit code 0 means the socket was removed and telemetry flushed. The daemon does
 not remove containers, networks, or the `dockerdless-logs/` directory on exit;
 clean those up explicitly (see [Cleanup](#cleanup)).
 
-There is no daemonize mode and no config file. Run it under systemd or in a
-terminal; `-help` prints usage.
+There is no daemonize mode. Run it under systemd or in a terminal;
+`-help` prints usage. To use a YAML file and enable reload, set
+`DOCKERDLESS_CONFIG_FILE=/etc/dockerdless/config.yaml` before starting.
+
+### Configuration reload
+
+The file watcher observes the containing directory, so atomic replacement is
+safe. Valid `log-level` edits take effect immediately. Invalid YAML or values
+are rejected, logged, and do not replace the last valid snapshot. Changes to
+the socket path, containerd/BuildKit sockets or namespace, CNI directories,
+OTel settings, `default-stop-timeout`, `request-timeout`, or reserved feature
+flags log `configuration change requires restart`; restart the daemon to apply
+them. Environment-only configuration is read at startup and is not watched.
+
+For a reload check:
+
+```bash
+DOCKERDLESS_CONFIG_FILE=/tmp/dockerdless.yaml ./bin/dockerdless
+# edit log-level: info -> debug, then emit a debug-producing operation
+# watch stderr for: {"msg":"configuration reloaded","setting":"log-level"}
+```
+
+If a valid-looking edit does not apply, inspect stderr for a rejected reload,
+confirm the file is readable by the daemon, and ensure the file contains the
+same kebab-case keys as the [configuration reference](../README.md#configuration-reference).
+
+### Startup reconciliation
+
+Before the API socket starts serving, dockerdless lists container metadata and
+task status from the configured containerd namespace and rebuilds its volatile
+Docker identity registry. A task in `running` state restores the container as
+`running`; stopped tasks restore `exited` with their exit code and OOM flag.
+Metadata with no task is restored as `exited` and counted as stale, while a
+task with no metadata is counted as cleanup. The structured log entry
+`container state reconciliation complete` includes `reconciled_count`,
+`stale_count`, and `cleanup_count`. If containerd cannot be listed or a record
+cannot be reconciled, the daemon logs a warning and starts with an empty
+registry so a transient backend problem does not block availability.
 
 ## Verify it is alive
 

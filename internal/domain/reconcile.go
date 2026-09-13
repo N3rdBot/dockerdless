@@ -8,32 +8,21 @@ import (
 )
 
 var (
-	// ErrDuplicateContainerMetadata means two metadata records share an ID.
 	ErrDuplicateContainerMetadata = errors.New("duplicate container metadata")
-	// ErrDuplicateTaskSnapshot means two runtime snapshots share a container ID.
-	ErrDuplicateTaskSnapshot = errors.New("duplicate task snapshot")
-	// ErrInvalidTaskSnapshot means a task snapshot has no usable identity or state.
-	ErrInvalidTaskSnapshot = errors.New("invalid task snapshot")
+	ErrDuplicateTaskSnapshot      = errors.New("duplicate task snapshot")
+	ErrInvalidTaskSnapshot        = errors.New("invalid task snapshot")
 )
 
-// TaskState is the state reported by the containerd Tasks service.
 type TaskState string
 
 const (
-	// TaskStateCreated means a task object exists but is not running.
-	TaskStateCreated TaskState = "created"
-	// TaskStateRunning means the task process is running.
-	TaskStateRunning TaskState = "running"
-	// TaskStatePaused means the task process is paused.
-	TaskStatePaused TaskState = "paused"
-	// TaskStateRestarting means the task is in a restart transition.
+	TaskStateCreated    TaskState = "created"
+	TaskStateRunning    TaskState = "running"
+	TaskStatePaused     TaskState = "paused"
 	TaskStateRestarting TaskState = "restarting"
-	// TaskStateStopped means the task process has exited.
-	TaskStateStopped TaskState = "stopped"
-	// TaskStateExited is accepted for snapshots already normalized to Docker terminology.
-	TaskStateExited TaskState = "exited"
-	// TaskStateDead means the task's runtime object is unusable.
-	TaskStateDead TaskState = "dead"
+	TaskStateStopped    TaskState = "stopped"
+	TaskStateExited     TaskState = "exited"
+	TaskStateDead       TaskState = "dead"
 
 	TaskCreated    = TaskStateCreated
 	TaskRunning    = TaskStateRunning
@@ -44,7 +33,6 @@ const (
 	TaskDead       = TaskStateDead
 )
 
-// TaskStatus is a compatibility name for TaskState.
 type TaskStatus = TaskState
 
 const (
@@ -57,7 +45,6 @@ const (
 	TaskStatusDead       = TaskStateDead
 )
 
-// TaskSnapshot is the runtime half of containerd's split container model.
 type TaskSnapshot struct {
 	ID          ContainerID `json:"Id,omitempty"`
 	ContainerID ContainerID `json:"ContainerID,omitempty"`
@@ -69,20 +56,14 @@ type TaskSnapshot struct {
 	FinishedAt  time.Time   `json:"FinishedAt,omitzero"`
 }
 
-// ReconcileResult contains runtime-derived containers and cleanup classes.
 type ReconcileResult struct {
 	Containers []Container   `json:"Containers"`
 	Stale      []ContainerID `json:"Stale"`
 	Cleanup    []ContainerID `json:"Cleanup"`
 }
 
-// ReconciliationResult is a compatibility name for ReconcileResult.
 type ReconciliationResult = ReconcileResult
 
-// Reconcile joins metadata records to runtime task snapshots.
-// Metadata without a task is exited and stale; it is never running.
-// A task without metadata is marked for cleanup because its runtime object
-// cannot be safely addressed through the Docker identity index.
 func Reconcile(metadata []Container, tasks []TaskSnapshot) (ReconcileResult, error) {
 	metadataByID := make(map[ContainerID]Container, len(metadata))
 	for _, container := range metadata {
@@ -133,7 +114,6 @@ func Reconcile(metadata []Container, tasks []TaskSnapshot) (ReconcileResult, err
 		}
 		result.Containers = append(result.Containers, container)
 	}
-
 	for id := range tasksByID {
 		result.Cleanup = append(result.Cleanup, id)
 	}
@@ -166,23 +146,17 @@ func applyTask(container *Container, task TaskSnapshot) error {
 
 	switch task.Status {
 	case TaskStateCreated:
-		container.State = ContainerStateCreated
-		container.Dead = false
+		container.State, container.Dead = ContainerStateCreated, false
 	case TaskStateRunning:
-		container.State = ContainerStateRunning
-		container.Dead = false
+		container.State, container.Dead = ContainerStateRunning, false
 	case TaskStatePaused:
-		container.State = ContainerStatePaused
-		container.Dead = false
+		container.State, container.Dead = ContainerStatePaused, false
 	case TaskStateRestarting:
-		container.State = ContainerStateRestarting
-		container.Dead = false
+		container.State, container.Dead = ContainerStateRestarting, false
 	case TaskStateStopped, TaskStateExited:
-		container.State = ContainerStateExited
-		container.Dead = false
+		container.State, container.Dead = ContainerStateExited, false
 	case TaskStateDead:
-		container.State = ContainerStateDead
-		container.Dead = true
+		container.State, container.Dead = ContainerStateDead, true
 	default:
 		return fmt.Errorf("%w: unsupported task status %q", ErrInvalidTaskSnapshot, task.Status)
 	}

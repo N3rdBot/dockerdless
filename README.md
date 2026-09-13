@@ -76,14 +76,15 @@ clean up with `testcontainers.CleanupContainer` or `t.Cleanup`.
 
 ## Configuration reference
 
-Every setting is an environment variable. There is no config file and no
-command-line flag except `-help`. Reload-on-change is not wired in the MVP:
-restart the daemon to apply changes.
+Settings may be supplied through environment variables or a YAML config file.
+Set `DOCKERDLESS_CONFIG_FILE` to enable file loading and hot reload. There is no
+command-line flag except `-help`.
 
 | Environment variable | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `DOCKERDLESS_SOCKET_PATH` | absolute path | `/var/run/dockerdless.sock` | Docker API Unix socket. Created `0660`, owned by the daemon uid; see [docs/security.md](docs/security.md). |
 | `DOCKERDLESS_LOG_LEVEL` | `debug`\|`info`\|`warn`\|`error`\|`dpanic`\|`panic`\|`fatal` | `info` | Structured (JSON) log level. Output goes to stderr. |
+| `DOCKERDLESS_CONFIG_FILE` | absolute path | unset | YAML configuration file. Changes to a valid file are watched atomically. |
 | `DOCKERDLESS_OTEL_SERVICE_NAME` | non-empty string | `dockerdless` | `service.name` resource for OpenTelemetry. |
 | `DOCKERDLESS_OTEL_ENDPOINT` | `host:port`, `http://…`, or `https://…` | empty (disabled) | OTLP gRPC endpoint for traces, metrics, and logs. Empty means fully offline; exporters are not constructed. `https://` enables TLS. |
 | `DOCKERDLESS_CONTAINERD_NAMESPACE` | non-empty string | `moby` | containerd namespace for containers, tasks, and images. When left at the built-in `moby` default the daemon switches to `default` to match the local BuildKit worker (see [docs/operations.md](docs/operations.md#containerd-namespaces)). |
@@ -95,6 +96,15 @@ restart the daemon to apply changes.
 | `DOCKERDLESS_REQUEST_TIMEOUT` | Go duration | `30s` | Per-request timeout bound. |
 | `DOCKERDLESS_ENABLE_CRI` | bool | `false` | Inert forward-compatibility placeholder. The MVP never serves CRI. |
 | `DOCKERDLESS_ENABLE_ROOTLESS` | bool | `false` | Inert forward-compatibility placeholder. The MVP never runs rootless. |
+
+The YAML file uses the same kebab-case keys as the table (for example,
+`log-level`, `request-timeout`, and `containerd-socket`). A valid `log-level`
+change is applied without restart. Invalid edits are logged and the last valid
+snapshot remains active. Socket, namespace, CNI, BuildKit, telemetry, feature
+flag, and timeout changes are reported as `requires restart`; they do not alter
+already-constructed connections or application services. `enable-cri` and
+`enable-rootless` are reserved and remain unsupported; enabling either does
+not make the daemon serve that mode.
 
 Container log files are written to `dockerdless-logs/` beside the socket
 directory (for example `/tmp/dockerdless-logs/<container-id>.log`) and are

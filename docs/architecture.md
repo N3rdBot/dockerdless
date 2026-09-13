@@ -68,11 +68,26 @@ live integration harness with real backends.
 
 ## Configuration and reload
 
-`internal/config` decodes the environment-backed settings into a validated,
-immutable `Config` snapshot. A file watcher exists for atomic snapshot swaps,
-but the running daemon does not wire reload in the MVP: restart to apply
-changes. The full schema is documented in the
-[README configuration reference](../README.md#configuration-reference).
+`internal/config` decodes environment-backed settings or the optional YAML file
+into a validated, immutable `Config` snapshot. The composition root owns the
+`Store`, loads the startup snapshot, and starts its directory watcher when
+`DOCKERDLESS_CONFIG_FILE` is set. A successful change publishes a new snapshot;
+the daemon applies `log-level` through zap's race-safe `AtomicLevel`. Invalid
+changes are reported to the daemon logger and leave the previous snapshot in
+place. Connections, telemetry providers, application timeout fields, reserved
+feature flags, and other startup-only settings produce a `requires restart`
+warning instead of mutating live infrastructure.
+
+The runtime state registry is intentionally volatile. During startup the
+composition root lists containerd metadata and tasks in the active namespace,
+converts them into the domain identity/runtime snapshots, reconciles the two
+views, and saves the result before the API server accepts requests. Metadata
+without a task is restored as `exited` and reported as stale; tasks without
+metadata are reported for cleanup. A reconciliation failure is warned about
+but does not prevent the daemon from serving. Recovered states also use the
+domain containerd-topic event taxonomy when a derived topic is known, so the
+Docker action mapping remains a live contract rather than dead code. The full
+configuration schema is documented in the [README configuration reference](../README.md#configuration-reference).
 
 ## Compatibility
 
