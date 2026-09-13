@@ -7,10 +7,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/N3rdBot/dockerdless/internal/observability"
 	dockertypes "github.com/moby/moby/api/types"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
+
+	"github.com/N3rdBot/dockerdless/internal/observability"
 )
 
 const jsonMediaType dockertypes.MediaType = "application/json"

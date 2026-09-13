@@ -57,14 +57,14 @@ func TestSynthesizeSettingsPublishesNonzeroPorts(t *testing.T) {
 		MACAddress:  "aa:bb:cc:dd:ee:02",
 		Aliases:     []string{"web-alias"},
 	}
-	settings, err := cni.SynthesizeSettings([]domain.NetworkAttachment{attachment}, []domain.PortBinding{
+	_, err := cni.SynthesizeSettings([]domain.NetworkAttachment{attachment}, []domain.PortBinding{
 		{ContainerPort: 80, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 0},
 	})
 	if !errors.Is(err, cni.ErrUnallocatedPort) {
 		t.Fatalf("SynthesizeSettings(host port 0) = %v, want ErrUnallocatedPort", err)
 	}
 
-	settings, err = cni.SynthesizeSettings([]domain.NetworkAttachment{attachment}, []domain.PortBinding{
+	settings, err := cni.SynthesizeSettings([]domain.NetworkAttachment{attachment}, []domain.PortBinding{
 		{ContainerPort: 80, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 49153},
 	})
 	if err != nil {

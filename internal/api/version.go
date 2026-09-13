@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -119,13 +120,13 @@ func allVersionCharacters(version string) bool {
 func parseAPIVersion(version string) ([]int, error) {
 	parts := strings.Split(version, ".")
 	if len(parts) == 0 {
-		return nil, fmt.Errorf("version is empty")
+		return nil, errors.New("version is empty")
 	}
 
 	parsed := make([]int, len(parts))
 	for index, part := range parts {
 		if part == "" {
-			return nil, fmt.Errorf("version contains an empty component")
+			return nil, errors.New("version contains an empty component")
 		}
 		value, err := strconv.Atoi(part)
 		if err != nil || value < 0 {
@@ -148,7 +149,7 @@ func compareAPIVersions(left, right string) (int, error) {
 
 	length := len(leftParts)
 	length = max(length, len(rightParts))
-	for index := 0; index < length; index++ {
+	for index := range length {
 		leftPart, rightPart := 0, 0
 		if index < len(leftParts) {
 			leftPart = leftParts[index]

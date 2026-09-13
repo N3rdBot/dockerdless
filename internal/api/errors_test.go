@@ -22,7 +22,7 @@ func TestDockerError_constructorsMapStatusAndEnvelope(t *testing.T) {
 			status:     http.StatusNotFound,
 			kind:       ErrorKindNotFound,
 			wantBody:   `{"message":"missing"}`,
-			wantHeader: string(jsonMediaType),
+			wantHeader: jsonMediaType,
 		},
 		{
 			name:       "conflict",
@@ -30,7 +30,7 @@ func TestDockerError_constructorsMapStatusAndEnvelope(t *testing.T) {
 			status:     http.StatusConflict,
 			kind:       ErrorKindConflict,
 			wantBody:   `{"message":"missing"}`,
-			wantHeader: string(jsonMediaType),
+			wantHeader: jsonMediaType,
 		},
 		{
 			name:       "invalid parameter",
@@ -38,7 +38,7 @@ func TestDockerError_constructorsMapStatusAndEnvelope(t *testing.T) {
 			status:     http.StatusBadRequest,
 			kind:       ErrorKindInvalidParameter,
 			wantBody:   `{"message":"missing"}`,
-			wantHeader: string(jsonMediaType),
+			wantHeader: jsonMediaType,
 		},
 		{
 			name:       "not implemented",
@@ -46,7 +46,7 @@ func TestDockerError_constructorsMapStatusAndEnvelope(t *testing.T) {
 			status:     http.StatusNotImplemented,
 			kind:       ErrorKindNotImplemented,
 			wantBody:   `{"message":"missing"}`,
-			wantHeader: string(jsonMediaType),
+			wantHeader: jsonMediaType,
 		},
 		{
 			name:       "server error",
@@ -54,7 +54,7 @@ func TestDockerError_constructorsMapStatusAndEnvelope(t *testing.T) {
 			status:     http.StatusInternalServerError,
 			kind:       ErrorKindServer,
 			wantBody:   `{"message":"missing"}`,
-			wantHeader: string(jsonMediaType),
+			wantHeader: jsonMediaType,
 		},
 	}
 

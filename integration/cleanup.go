@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -64,8 +65,7 @@ func (r *cleanupRegistry) run() {
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(context.Background()), cleanupTimeout)
 	defer cancel()
-	for index := len(steps) - 1; index >= 0; index-- {
-		step := steps[index]
+	for _, step := range slices.Backward(steps) {
 		if err := step.run(ctx); err != nil {
 			r.t.Errorf("cleanup %q: %v", step.name, err)
 		}
@@ -181,7 +181,7 @@ func forceRemoveContainer(ctx context.Context, client *containerd.Client, contai
 // deleteLeftoverBridges removes every CNI bridge named by a conflist in the
 // daemon's ephemeral config directory. The daemon deletes bridges on network
 // removal; this is the backstop for failed runs where that removal never ran.
-func deleteLeftoverBridges(cniConfigDir string) error {
+func deleteLeftoverBridges(ctx context.Context, cniConfigDir string) error {
 	entries, err := os.ReadDir(cniConfigDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -222,7 +222,7 @@ func deleteLeftoverBridges(cniConfigDir string) error {
 				continue
 			}
 			seen[plugin.Bridge] = struct{}{}
-			if err := deleteNetworkLink(plugin.Bridge); err != nil {
+			if err := deleteNetworkLink(ctx, plugin.Bridge); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -230,8 +230,8 @@ func deleteLeftoverBridges(cniConfigDir string) error {
 	return errors.Join(problems...)
 }
 
-func deleteNetworkLink(name string) error {
-	output, err := exec.Command("ip", "link", "del", name).CombinedOutput()
+func deleteNetworkLink(ctx context.Context, name string) error {
+	output, err := exec.CommandContext(ctx, "ip", "link", "del", name).CombinedOutput()
 	if err == nil {
 		return nil
 	}

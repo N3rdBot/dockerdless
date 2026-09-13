@@ -5,11 +5,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/N3rdBot/dockerdless/internal/config"
-	"github.com/N3rdBot/dockerdless/internal/observability"
 	"github.com/fsnotify/fsnotify"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/N3rdBot/dockerdless/internal/config"
+	"github.com/N3rdBot/dockerdless/internal/observability"
 )
 
 const configFileEnvironment = "DOCKERDLESS_CONFIG_FILE"

@@ -11,12 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
-	"github.com/N3rdBot/dockerdless/internal/ports"
-	"github.com/N3rdBot/dockerdless/internal/streams"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/system"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
+	"github.com/N3rdBot/dockerdless/internal/ports"
+	"github.com/N3rdBot/dockerdless/internal/streams"
 )
 
 func TestHandlers_containerCreateWiresRequestAndReturns201(t *testing.T) {
@@ -34,7 +35,7 @@ func TestHandlers_containerCreateWiresRequestAndReturns201(t *testing.T) {
 		"Labels":{"app":"web"},
 		"HostConfig":{"NetworkMode":"bridge","PortBindings":{"80/tcp":[{"HostPort":"18080"}]}}
 	}`
-	request := httptest.NewRequest(http.MethodPost, "/v1.44/containers/create?name=web", strings.NewReader(body))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1.44/containers/create?name=web", strings.NewReader(body))
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -77,7 +78,7 @@ func TestHandlers_containerCreateRejectsPrivileged(t *testing.T) {
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 	recorder := httptest.NewRecorder()
 
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(`{"Image":"alpine:latest","HostConfig":{"Privileged":true}}`)))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/create", strings.NewReader(`{"Image":"alpine:latest","HostConfig":{"Privileged":true}}`)))
 
 	if recorder.Code != http.StatusNotImplemented {
 		t.Fatalf("expected 501, got %d body=%s", recorder.Code, recorder.Body.String())
@@ -117,7 +118,7 @@ func TestHandlers_containerCreateRejectsUnsupportedFields(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			body := `{"Image":"alpine:latest","HostConfig":{` + tt.field + `}}`
 
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/create", strings.NewReader(body)))
 
 			if recorder.Code != http.StatusNotImplemented {
 				t.Fatalf("expected 501, got %d body=%s", recorder.Code, recorder.Body.String())
@@ -155,7 +156,7 @@ func TestHandlers_containerCreateRejectsUnsupportedConfigFields(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			body := `{"Image":"alpine:latest",` + tt.field + `}`
 
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/create", strings.NewReader(body)))
 
 			if recorder.Code != http.StatusNotImplemented {
 				t.Fatalf("expected 501, got %d body=%s", recorder.Code, recorder.Body.String())
@@ -188,7 +189,7 @@ func TestHandlers_containerCreateRejectsInvalidMountSource(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			body := `{"Image":"alpine:latest","HostConfig":{` + tt.field + `}}`
 
-			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+			handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/create", strings.NewReader(body)))
 
 			if recorder.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400, got %d body=%s", recorder.Code, recorder.Body.String())
@@ -206,7 +207,7 @@ func TestHandlers_containerCreateRejectsInvalidHostPort(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	body := `{"Image":"alpine:latest","HostConfig":{"PortBindings":{"80/tcp":[{"HostPort":"not-a-port"}]}}}`
 
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/create", strings.NewReader(body)))
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d body=%s", recorder.Code, recorder.Body.String())
@@ -230,7 +231,7 @@ func TestHandlers_containerInspectMapsStateNetworkingAndFiltersInternalLabels(t 
 	}
 	service := &fakeService{inspect: func(context.Context, string) (domain.Container, error) { return item, nil }}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
-	request := httptest.NewRequest(http.MethodGet, "/containers/web/json", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/containers/web/json", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -273,7 +274,7 @@ func TestHandlers_containerLogsMultiplexesNonTTYStream(t *testing.T) {
 		},
 	}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
-	request := httptest.NewRequest(http.MethodGet, "/containers/web/logs", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/containers/web/logs", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -313,7 +314,7 @@ func TestHandlers_containerLogsUsesRawStreamForTTY(t *testing.T) {
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 	recorder := httptest.NewRecorder()
 
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/containers/web/logs", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/containers/web/logs", nil))
 
 	if got := recorder.Header().Get("Content-Type"); got != streams.MediaTypeRawStream {
 		t.Fatalf("expected raw content type, got %q", got)
@@ -339,7 +340,7 @@ func TestHandlers_execCreateAndInspect(t *testing.T) {
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 
 	createRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(createRecorder, httptest.NewRequest(http.MethodPost, "/containers/web/exec", strings.NewReader(`{"Cmd":["sh","-c"],"AttachStdout":true}`)))
+	handler.ServeHTTP(createRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/web/exec", strings.NewReader(`{"Cmd":["sh","-c"],"AttachStdout":true}`)))
 	if createRecorder.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d body=%s", createRecorder.Code, createRecorder.Body.String())
 	}
@@ -352,7 +353,7 @@ func TestHandlers_execCreateAndInspect(t *testing.T) {
 	}
 
 	inspectRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(inspectRecorder, httptest.NewRequest(http.MethodGet, "/exec/exec-1/json", nil))
+	handler.ServeHTTP(inspectRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/exec/exec-1/json", nil))
 	if inspectRecorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", inspectRecorder.Code)
 	}
@@ -396,7 +397,7 @@ func TestHandlers_networkLifecycle(t *testing.T) {
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 
 	listRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/v1.44/networks", nil))
+	handler.ServeHTTP(listRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/networks", nil))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", listRecorder.Code)
 	}
@@ -409,7 +410,7 @@ func TestHandlers_networkLifecycle(t *testing.T) {
 	}
 
 	inspectRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(inspectRecorder, httptest.NewRequest(http.MethodGet, "/networks/qa-net", nil))
+	handler.ServeHTTP(inspectRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/networks/qa-net", nil))
 	if inspectRecorder.Code != http.StatusOK {
 		t.Fatalf("expected 200 network inspect, got %d", inspectRecorder.Code)
 	}
@@ -422,19 +423,19 @@ func TestHandlers_networkLifecycle(t *testing.T) {
 	}
 
 	createRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(createRecorder, httptest.NewRequest(http.MethodPost, "/networks/create", strings.NewReader(`{"Name":"frontend","Driver":"bridge"}`)))
+	handler.ServeHTTP(createRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/networks/create", strings.NewReader(`{"Name":"frontend","Driver":"bridge"}`)))
 	if createRecorder.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createRecorder.Code)
 	}
 
 	connectRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(connectRecorder, httptest.NewRequest(http.MethodPost, "/networks/network-frontend/connect", strings.NewReader(`{"Container":"c1","EndpointConfig":{"Aliases":["web"]}}`)))
+	handler.ServeHTTP(connectRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/networks/network-frontend/connect", strings.NewReader(`{"Container":"c1","EndpointConfig":{"Aliases":["web"]}}`)))
 	if connectRecorder.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d body=%s", connectRecorder.Code, connectRecorder.Body.String())
 	}
 
 	removeRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(removeRecorder, httptest.NewRequest(http.MethodDelete, "/networks/network-frontend", nil))
+	handler.ServeHTTP(removeRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/networks/network-frontend", nil))
 	if removeRecorder.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d", removeRecorder.Code)
 	}
@@ -456,7 +457,7 @@ func TestHandlers_imageInspectAndList(t *testing.T) {
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 
 	inspectRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(inspectRecorder, httptest.NewRequest(http.MethodGet, "/images/alpine:latest/json", nil))
+	handler.ServeHTTP(inspectRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/images/alpine:latest/json", nil))
 	if inspectRecorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", inspectRecorder.Code)
 	}
@@ -469,7 +470,7 @@ func TestHandlers_imageInspectAndList(t *testing.T) {
 	}
 
 	listRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(listRecorder, httptest.NewRequest(http.MethodGet, "/images/json", nil))
+	handler.ServeHTTP(listRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/images/json", nil))
 	if listRecorder.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", listRecorder.Code)
 	}
@@ -485,7 +486,7 @@ func TestHandlers_pingAndVersionAndInfo(t *testing.T) {
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 
 	headRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(headRecorder, httptest.NewRequest(http.MethodHead, "/_ping", nil))
+	handler.ServeHTTP(headRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodHead, "/_ping", nil))
 	if headRecorder.Code != http.StatusOK || headRecorder.Body.Len() != 0 {
 		t.Fatalf("expected empty 200 HEAD, got %d %q", headRecorder.Code, headRecorder.Body.String())
 	}
@@ -494,7 +495,7 @@ func TestHandlers_pingAndVersionAndInfo(t *testing.T) {
 	}
 
 	versionRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(versionRecorder, httptest.NewRequest(http.MethodGet, "/v1.44/version", nil))
+	handler.ServeHTTP(versionRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/version", nil))
 	var version system.VersionResponse
 	if err := json.NewDecoder(versionRecorder.Body).Decode(&version); err != nil {
 		t.Fatalf("decode version: %v", err)
@@ -504,7 +505,7 @@ func TestHandlers_pingAndVersionAndInfo(t *testing.T) {
 	}
 
 	infoRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(infoRecorder, httptest.NewRequest(http.MethodGet, "/info", nil))
+	handler.ServeHTTP(infoRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/info", nil))
 	var info system.Info
 	if err := json.NewDecoder(infoRecorder.Body).Decode(&info); err != nil {
 		t.Fatalf("decode info: %v", err)
@@ -530,7 +531,7 @@ func TestHandlers_containerListAppliesFilters(t *testing.T) {
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 	recorder := httptest.NewRecorder()
 
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, `/containers/json?all=1&filters={"label":["app=web"]}`, nil))
+	handler.ServeHTTP(recorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, `/containers/json?all=1&filters={"label":["app=web"]}`, nil))
 
 	var summaries []container.Summary
 	if err := json.NewDecoder(recorder.Body).Decode(&summaries); err != nil {
@@ -541,7 +542,7 @@ func TestHandlers_containerListAppliesFilters(t *testing.T) {
 	}
 
 	regexRecorder := httptest.NewRecorder()
-	handler.ServeHTTP(regexRecorder, httptest.NewRequest(http.MethodGet, `/containers/json?all=1&filters={"name":{"^/db$":true}}`, nil))
+	handler.ServeHTTP(regexRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, `/containers/json?all=1&filters={"name":{"^/db$":true}}`, nil))
 	var regexSummaries []container.Summary
 	if err := json.NewDecoder(regexRecorder.Body).Decode(&regexSummaries); err != nil {
 		t.Fatalf("decode regex-filtered list: %v", err)

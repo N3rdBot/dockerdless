@@ -30,9 +30,11 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-func waitFor(t *testing.T, timeout time.Duration, condition func() bool, what string) {
+const waitTimeout = 3 * time.Second
+
+func waitFor(t *testing.T, condition func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(waitTimeout)
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
@@ -111,7 +113,7 @@ const criFixture = `2024-01-02T03:04:05Z stdout F first
 func TestReadLogsTailAndSince(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "container-json.log")
-	if err := os.WriteFile(path, []byte(criFixture), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(criFixture), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 
@@ -156,7 +158,7 @@ func TestReadLogsTailAndSince(t *testing.T) {
 
 func TestReadLogsRawFallback(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "plain.log")
-	if err := os.WriteFile(path, []byte("plain line one\nplain line two\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("plain line one\nplain line two\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	var out, errOut bytes.Buffer
@@ -174,7 +176,7 @@ func TestReadLogsTruncatedLastLine(t *testing.T) {
 	t.Run("cri truncated", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "cri.log")
 		content := criFixture + "2024-01-02T03:04:09Z stdout F truncated"
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 		var out, errOut bytes.Buffer
@@ -188,7 +190,7 @@ func TestReadLogsTruncatedLastLine(t *testing.T) {
 
 	t.Run("raw truncated", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "raw.log")
-		if err := os.WriteFile(path, []byte("complete\nincomplete"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte("complete\nincomplete"), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 		var out, errOut bytes.Buffer
@@ -202,7 +204,7 @@ func TestReadLogsTruncatedLastLine(t *testing.T) {
 
 	t.Run("tail ignores incomplete last line", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "tail.log")
-		if err := os.WriteFile(path, []byte("a\nb\nc"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte("a\nb\nc"), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 		var out, errOut bytes.Buffer
@@ -229,7 +231,7 @@ func TestReadLogsMissingFileNoPanic(t *testing.T) {
 func TestReadLogsFollowPicksUpNewLinesAndRotation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "follow.log")
-	if err := os.WriteFile(path, []byte("one\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("one\n"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -242,18 +244,18 @@ func TestReadLogsFollowPicksUpNewLinesAndRotation(t *testing.T) {
 		done <- streams.ReadLogs(ctx, path, streams.LogOptions{Follow: true}, &out, &errOut)
 	}()
 
-	waitFor(t, 3*time.Second, func() bool { return strings.Contains(out.String(), "one\n") }, "initial line")
+	waitFor(t, func() bool { return strings.Contains(out.String(), "one\n") }, "initial line")
 
 	appendFile(t, path, "two\n")
-	waitFor(t, 3*time.Second, func() bool { return strings.Contains(out.String(), "two\n") }, "appended line")
+	waitFor(t, func() bool { return strings.Contains(out.String(), "two\n") }, "appended line")
 
 	if err := os.Rename(path, path+".1"); err != nil {
 		t.Fatalf("rotate: %v", err)
 	}
-	if err := os.WriteFile(path, []byte("three\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("three\n"), 0o600); err != nil {
 		t.Fatalf("recreate: %v", err)
 	}
-	waitFor(t, 3*time.Second, func() bool { return strings.Contains(out.String(), "three\n") }, "line after rotation")
+	waitFor(t, func() bool { return strings.Contains(out.String(), "three\n") }, "line after rotation")
 
 	cancel()
 	select {
@@ -268,7 +270,7 @@ func TestReadLogsFollowPicksUpNewLinesAndRotation(t *testing.T) {
 
 func TestReadLogsFollowFlushesAvailableLineOnCancellation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cancel.log")
-	if err := os.WriteFile(path, []byte("first\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("first\n"), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -277,7 +279,7 @@ func TestReadLogsFollowFlushesAvailableLineOnCancellation(t *testing.T) {
 	go func() {
 		done <- streams.ReadLogs(ctx, path, streams.LogOptions{Follow: true, PollInterval: time.Second}, &out, &errOut)
 	}()
-	waitFor(t, 3*time.Second, func() bool { return strings.Contains(out.String(), "first\n") }, "initial line")
+	waitFor(t, func() bool { return strings.Contains(out.String(), "first\n") }, "initial line")
 	appendFile(t, path, "final\n")
 	cancel()
 	select {
@@ -295,11 +297,11 @@ func TestReadLogsFollowFlushesAvailableLineOnCancellation(t *testing.T) {
 
 func appendFile(t *testing.T, path, line string) {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("open for append: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(line); err != nil {
 		t.Fatalf("append: %v", err)
 	}

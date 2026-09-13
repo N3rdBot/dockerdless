@@ -5,9 +5,10 @@ import (
 	"io"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/ports"
-	"go.uber.org/zap"
 )
 
 const (

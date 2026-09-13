@@ -5,9 +5,10 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/moby/moby/api/types/network"
+
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/ports"
-	"github.com/moby/moby/api/types/network"
 )
 
 func (h *handlers) networkList(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +109,7 @@ func networkSummaryResponse(detail ports.NetworkDetail) network.Summary {
 		}
 		ipam.Config = append(ipam.Config, config)
 	}
-	return network.Summary{Network: network.Network{
+	return network.Summary{
 		Name:       detail.Name,
 		ID:         string(detail.ID),
 		Created:    time.Time{},
@@ -118,6 +119,5 @@ func networkSummaryResponse(detail ports.NetworkDetail) network.Summary {
 		EnableIPv6: false,
 		IPAM:       ipam,
 		Options:    map[string]string{},
-		Labels:     detail.Labels,
-	}}
+		Labels:     detail.Labels}
 }

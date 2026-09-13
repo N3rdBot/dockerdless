@@ -177,7 +177,7 @@ func writeConfigAtomically(path, content string) error {
 	if err := os.Rename(temporaryPath, path); err != nil {
 		cleanupErr := os.Remove(temporaryPath)
 		if cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
-			return fmt.Errorf("rename temporary config: %w; remove temporary config: %v", err, cleanupErr)
+			return fmt.Errorf("rename temporary config: %w; remove temporary config: %w", err, cleanupErr)
 		}
 		return fmt.Errorf("rename temporary config: %w", err)
 	}

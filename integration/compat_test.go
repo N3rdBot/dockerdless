@@ -4,6 +4,7 @@ package integration
 
 import (
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -118,7 +119,8 @@ func testcontainersProvider(t *testing.T) testcontainers.GenericProvider {
 // run without one, so the probe dials directly just as containerd would.
 func requireRegistryEgress(t *testing.T) {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", compatRegistryAddress, compatRegistryProbe)
+	dialer := &net.Dialer{Timeout: compatRegistryProbe}
+	conn, err := dialer.DialContext(t.Context(), "tcp", compatRegistryAddress)
 	if err != nil {
 		t.Skipf("testcontainers image pull needs direct registry egress from containerd (%s, no proxy configured): %v",
 			compatRegistryAddress, err)
@@ -144,10 +146,5 @@ func publishedHostPort(t *testing.T, inspect *dockertypes.InspectResponse, numbe
 }
 
 func containsString(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, wanted)
 }

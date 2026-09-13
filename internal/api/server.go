@@ -107,6 +107,10 @@ func (s *Server) SocketPath() string {
 //  6. The freshly bound socket is re-verified as a 0660 socket owned by this
 //     process; any mismatch closes it and refuses to serve.
 func (s *Server) Listen() (net.Listener, error) {
+	return s.listen(context.Background())
+}
+
+func (s *Server) listen(ctx context.Context) (net.Listener, error) {
 	if s == nil {
 		return nil, errors.New("API server is nil")
 	}
@@ -120,10 +124,10 @@ func (s *Server) Listen() (net.Listener, error) {
 			return nil, fmt.Errorf("create socket directory %s: %w", directory, err)
 		}
 	}
-	if err := s.removeStaleSocket(); err != nil {
+	if err := s.removeStaleSocket(ctx); err != nil {
 		return nil, err
 	}
-	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", s.socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "unix", s.socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", s.socketPath, err)
 	}
@@ -156,7 +160,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Run serves HTTP until ctx is canceled, then shuts down gracefully with the
 // configured timeout and removes the socket file.
 func (s *Server) Run(ctx context.Context) error {
-	listener, err := s.Listen()
+	listener, err := s.listen(ctx)
 	if err != nil {
 		return err
 	}
@@ -176,7 +180,7 @@ func (s *Server) Run(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.shutdownTimeout)
 	defer cancel()
 	return s.Shutdown(shutdownCtx)
 }
@@ -211,7 +215,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // removeStaleSocket unlinks a leftover socket file, but refuses to remove a
 // live socket, a non-socket file, or a socket owned by another uid. It repairs
 // a stale socket with permissions wider than 0660 before unlinking it.
-func (s *Server) removeStaleSocket() error {
+func (s *Server) removeStaleSocket(ctx context.Context) error {
 	info, err := os.Lstat(s.socketPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -222,7 +226,7 @@ func (s *Server) removeStaleSocket() error {
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("path %s exists and is not a socket", s.socketPath)
 	}
-	if err := probeLiveSocket(s.socketPath); err != nil {
+	if err := probeLiveSocket(ctx, s.socketPath); err != nil {
 		return err
 	}
 	if err := s.ensureSocketOwnership(info); err != nil {
@@ -278,13 +282,14 @@ func unsafeSocketMode(mode os.FileMode) bool {
 
 // probeLiveSocket reports whether a socket at path accepts connections. A live
 // socket is never removed; the daemon refuses to start instead.
-func probeLiveSocket(path string) error {
-	conn, err := net.DialTimeout("unix", path, staleSocketDialWait)
-	if err != nil {
-		return nil
+func probeLiveSocket(ctx context.Context, path string) error {
+	dialer := &net.Dialer{Timeout: staleSocketDialWait}
+	conn, err := dialer.DialContext(ctx, "unix", path)
+	if err == nil {
+		_ = conn.Close()
+		return fmt.Errorf("socket %s is already in use", path)
 	}
-	_ = conn.Close()
-	return fmt.Errorf("socket %s is already in use", path)
+	return nil
 }
 
 // verifySocketBinding re-checks the freshly created socket: exactly 0660, a

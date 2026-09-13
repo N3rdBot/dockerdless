@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	"go.uber.org/zap"
+
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 // handlers carries the dependencies shared by every Docker API handler.
@@ -51,7 +52,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 		WriteDockerError(w, NewServerError(err.Error()))
 		return
 	}
-	w.Header().Set("Content-Type", string(jsonMediaType))
+	w.Header().Set("Content-Type", jsonMediaType)
 	w.WriteHeader(status)
 	_, _ = w.Write(buffer.Bytes())
 }

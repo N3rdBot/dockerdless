@@ -44,6 +44,7 @@ func TestDefaultsLoadAndValidationRejectsEmptySocketPath(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			if err := test.cfg.Validate(); !errors.Is(err, test.want) {
 				t.Fatalf("Validate() error = %v, want %v", err, test.want)
 			}

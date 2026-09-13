@@ -12,6 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	containerdclient "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
+	"github.com/containerd/errdefs"
+	buildkitclient "github.com/moby/buildkit/client"
+	"go.uber.org/zap"
+
 	"github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
 	"github.com/N3rdBot/dockerdless/internal/adapters/cni"
 	"github.com/N3rdBot/dockerdless/internal/adapters/containerd"
@@ -21,11 +27,6 @@ import (
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/observability"
 	"github.com/N3rdBot/dockerdless/internal/ports"
-	containerdclient "github.com/containerd/containerd/v2/client"
-	"github.com/containerd/containerd/v2/pkg/namespaces"
-	"github.com/containerd/errdefs"
-	buildkitclient "github.com/moby/buildkit/client"
-	"go.uber.org/zap"
 )
 
 const (
@@ -49,10 +50,10 @@ func run(args []string) error {
 	flags := flag.NewFlagSet("dockerdless", flag.ContinueOnError)
 	flags.SetOutput(os.Stdout)
 	flags.Usage = func() {
-		fmt.Fprintln(flags.Output(), "Usage: dockerdless [options]")
-		fmt.Fprintln(flags.Output())
-		fmt.Fprintln(flags.Output(), "Run the Docker-compatible dockerdless daemon.")
-		fmt.Fprintln(flags.Output())
+		_, _ = fmt.Fprintln(flags.Output(), "Usage: dockerdless [options]")
+		_, _ = fmt.Fprintln(flags.Output())
+		_, _ = fmt.Fprintln(flags.Output(), "Run the Docker-compatible dockerdless daemon.")
+		_, _ = fmt.Fprintln(flags.Output())
 		flags.PrintDefaults()
 	}
 	help := flags.Bool("help", false, "print this help message")

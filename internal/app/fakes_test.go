@@ -243,7 +243,7 @@ func (f *fakeNetworks) EnsureDefaultNetwork(context.Context) (domain.NetworkID, 
 	if f.ensureErr != nil {
 		return "", f.ensureErr
 	}
-	return domain.NetworkID(f.resolveDetail.ID), nil
+	return f.resolveDetail.ID, nil
 }
 
 func (f *fakeNetworks) Resolve(_ context.Context, ref string) (ports.NetworkDetail, error) {

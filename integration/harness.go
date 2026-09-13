@@ -11,6 +11,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -90,7 +91,8 @@ func probeUnixSocket(name, path string) []string {
 	if info.Mode()&os.ModeSocket == 0 {
 		return []string{fmt.Sprintf("%s path %s is not a Unix socket (mode %s)", name, path, info.Mode())}
 	}
-	conn, err := net.DialTimeout("unix", path, dialProbeTimeout)
+	dialer := &net.Dialer{Timeout: dialProbeTimeout}
+	conn, err := dialer.DialContext(context.Background(), "unix", path)
 	if err != nil {
 		return []string{fmt.Sprintf("%s socket %s is not dialable: %v", name, path, err)}
 	}
@@ -124,7 +126,7 @@ func envOr(key, fallback string) string {
 // uniqueName builds a DNS-safe, run-unique resource name carrying the shared
 // name prefix so the containerd sweep can find it even when the test never
 // reached its own cleanup registration.
-func uniqueName(t *testing.T, kind string) string {
+func uniqueName(t *testing.T, _ string) string {
 	t.Helper()
 	name := fmt.Sprintf("dls-%d-%d-%s", os.Getpid(), uniqueCounter.Add(1), sanitizeName(t.Name()))
 	if len(name) > 120 {

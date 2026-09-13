@@ -10,11 +10,12 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/moby/moby/api/types/container"
+	"go.uber.org/zap"
+
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/ports"
 	"github.com/N3rdBot/dockerdless/internal/streams"
-	"github.com/moby/moby/api/types/container"
-	"go.uber.org/zap"
 )
 
 const initialResizeWait = 100 * time.Millisecond

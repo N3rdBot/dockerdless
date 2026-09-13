@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
 )
 
 func testRecord(name, configDigest string) ImageRecord {

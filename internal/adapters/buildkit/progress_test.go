@@ -55,7 +55,7 @@ func TestProgressWriterEmitsValidDockerJSON(t *testing.T) {
 	}
 
 	var raw map[string]json.RawMessage
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
 			t.Fatalf("line %q invalid JSON: %v", line, err)
 		}

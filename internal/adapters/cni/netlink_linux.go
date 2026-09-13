@@ -30,6 +30,7 @@ func deleteLink(name string) error {
 	attrAligned := (attrLen + 3) &^ 3
 	total := unix.NLMSG_HDRLEN + 16 + attrAligned
 	message := make([]byte, total)
+	//nolint:gosec // G115: netlink message length is bounded by the 16-byte interface name.
 	binary.LittleEndian.PutUint32(message[0:], uint32(total))
 	binary.LittleEndian.PutUint16(message[4:], unix.RTM_DELLINK)
 	binary.LittleEndian.PutUint16(message[6:], unix.NLM_F_REQUEST|unix.NLM_F_ACK)
@@ -40,6 +41,7 @@ func deleteLink(name string) error {
 	binary.LittleEndian.PutUint32(message[linkInfo+12:], 0xffffffff)
 
 	attribute := linkInfo + 16
+	//nolint:gosec // G115: netlink attribute length is bounded by the 16-byte interface name.
 	binary.LittleEndian.PutUint16(message[attribute:], uint16(attrLen))
 	binary.LittleEndian.PutUint16(message[attribute+2:], unix.IFLA_IFNAME)
 	copy(message[attribute+4:], nameBytes)
@@ -71,10 +73,12 @@ func receiveNetlinkAck(fd int) error {
 				if length < unix.NLMSG_HDRLEN+4 {
 					return errors.New("cni: short netlink error message")
 				}
+				//nolint:gosec // G115: netlink error codes are signed 32-bit by protocol.
 				code := int32(binary.LittleEndian.Uint32(response[offset+unix.NLMSG_HDRLEN:]))
 				if code == 0 {
 					return nil
 				}
+				//nolint:gosec // G115: errno values are small non-negative integers.
 				errno := syscall.Errno(-code)
 				if errors.Is(errno, unix.ENODEV) {
 					return errLinkNotFound

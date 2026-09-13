@@ -1,0 +1,249 @@
+# golangci-lint v2 configuration for dockerdless.
+# Verify with: golangci-lint config verify
+# Run with:    golangci-lint run ./...
+#
+# Import grouping is enforced by the gci formatter (machine-readable sections,
+# custom-order enabled so the order below is authoritative) plus goimports with
+# local-prefixes. The canonical order is:
+#   1. standard library
+#   2. default (third-party)
+#   3. localmodule (this module, resolved from go.mod - never hardcoded)
+#
+# The depguard rules below turn the hexagonal layering described in
+# docs/design into a build-time contract: domain knows nothing, ports point
+# inward, adapters stay isolated from each other, and the API layer depends on
+# the port types rather than on concrete adapters.
+version: "2"
+
+run:
+  # Lint the code behind build tags too. Without this the whole integration/
+  # package (harness, daemon process, fixtures) and the three adapter
+  # *integration_test.go files are silently skipped by every linter.
+  build-tags:
+    - integration
+    - cniintegration
+  # Four runners keeps the whole-repo run comfortably under the timeout on CI
+  # without starving the 2-core runners of the module cache.
+  concurrency: 4
+  go: "1.27"
+  # Report paths relative to the module root so the output is stable no matter
+  # where the repository is checked out.
+  relative-path-mode: gomod
+  tests: true
+  timeout: 10m
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - depguard
+    - durationcheck
+    - errcheck
+    - errorlint
+    - fatcontext
+    - gocheckcompilerdirectives
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - intrange
+    - makezero
+    - misspell
+    - modernize
+    - nilerr
+    - nilnesserr
+    - noctx
+    - nolintlint
+    - perfsprint
+    - prealloc
+    - predeclared
+    - reassign
+    - revive
+    - staticcheck
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+  settings:
+    depguard:
+      # Rules are evaluated per file; a file may be covered by several rules and
+      # every matching rule applies. `files` globs are matched against the
+      # absolute source path (separator '/'), hence the leading `**/`.
+      rules:
+        domain-purity:
+          # The domain has no infrastructure dependencies: it must not import
+          # containerd/BuildKit/CNI clients, HTTP, config or logging, nor any
+          # sibling internal package. `internal/domain` itself is exempt because
+          # external (domain_test) test packages may import it.
+          files:
+            - "**/internal/domain/**"
+          deny:
+            - pkg: "github.com/containerd/"
+              desc: "domain must not depend on containerd"
+            - pkg: "github.com/moby/"
+              desc: "domain must not depend on moby/buildkit"
+            - pkg: "github.com/containernetworking/"
+              desc: "domain must not depend on CNI"
+            - pkg: "net/http"
+              desc: "domain must not depend on HTTP transports"
+            - pkg: "github.com/spf13/viper"
+              desc: "domain must not depend on configuration loading"
+            - pkg: "go.uber.org/zap"
+              desc: "domain must not depend on logging infrastructure"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters"
+              desc: "domain must not import adapters"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/api"
+              desc: "domain must not import the API layer"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/app"
+              desc: "domain must not import use cases"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/config"
+              desc: "domain must not import configuration"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/observability"
+              desc: "domain must not import observability"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/ports"
+              desc: "domain must not import its own contracts"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/streams"
+              desc: "domain must not import stream helpers"
+        ports-inward:
+          # Ports are pure contracts: standard library plus domain types only.
+          # Anything else either leaks infrastructure into the contract or
+          # points outward instead of inward.
+          files:
+            - "**/internal/ports/**"
+          allow:
+            - "$gostd"
+            - "github.com/N3rdBot/dockerdless/internal/domain"
+        adapters-containerd-isolated:
+          # Each driven adapter owns one external technology; importing another
+          # adapter would couple the technologies and break their substitutability.
+          files:
+            - "**/internal/adapters/containerd/**"
+          deny:
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
+              desc: "containerd adapter must not import the buildkit adapter"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/cni"
+              desc: "containerd adapter must not import the cni adapter"
+        adapters-buildkit-isolated:
+          files:
+            - "**/internal/adapters/buildkit/**"
+          deny:
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/containerd"
+              desc: "buildkit adapter must not import the containerd adapter"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/cni"
+              desc: "buildkit adapter must not import the cni adapter"
+        adapters-cni-isolated:
+          files:
+            - "**/internal/adapters/cni/**"
+          deny:
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/containerd"
+              desc: "cni adapter must not import the containerd adapter"
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
+              desc: "cni adapter must not import the buildkit adapter"
+        api-no-adapters:
+          # The driving HTTP layer talks to the Service port; concrete adapters
+          # are wired together in internal/app (or cmd), never in internal/api.
+          files:
+            - "**/internal/api/**"
+          deny:
+            - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/"
+              desc: "api must depend on ports, not concrete adapters"
+    govet:
+      enable-all: true
+      disable:
+        # fieldalignment is a memory-layout micro-optimization; it would
+        # reorder struct fields across the domain types for no behavioral gain.
+        - fieldalignment
+        # shadow flags the intentional `if err := f(); err != nil` short-scope
+        # re-declaration idiom (23 findings across cmd/ and internal/). Renaming
+        # every short-lived local would add churn without fixing a bug, and
+        # shadow is not part of `go vet`'s default analyzer set.
+        - shadow
+    revive:
+      # Keep revive's default rule set and subtract the noisy rules below.
+      # Without enable-default-rules the `rules` list would replace the whole
+      # default set instead of extending it.
+      enable-default-rules: true
+      rules:
+        # exported demands doc comments on every exported symbol (21 findings)
+        # and flags BuildkitSolver as a stutter. The domain types are
+        # intentionally terse, and renaming the exported type would change the
+        # public API, which must stay stable.
+        - name: exported
+          disabled: true
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    paths:
+      - ^vendor$
+      - ^third_party$
+    rules:
+      # The integration harness deliberately shells out to `go build`, the
+      # freshly built daemon binary and `ip link del`; the program name is a
+      # function of the test environment, not user input, so G204 is noise.
+      - path: ^integration/
+        linters:
+          - gosec
+        text: "G204"
+      # credentials_test.go embeds a fake password constant to prove the daemon
+      # redacts credential fields; it is a fixture, not a leaked credential.
+      - path: ^internal/api/credentials_test\.go$
+        linters:
+          - gosec
+        text: "G101"
+      # testcontainers-go v0.44 cannot express this test with its replacements:
+      # network.New generates a UUID name (the test needs a run-unique named
+      # network) and provider.GetNetwork still consumes NetworkRequest.
+      - path: ^integration/compat_runtime_test\.go$
+        linters:
+          - staticcheck
+        text: "SA1019"
+
+issues:
+  # Never truncate the report: a clean run must mean zero findings, not zero
+  # findings in the first 50 samples of a linter.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: true
+
+output:
+  sort-order:
+    - linter
+    - file
+  show-stats: false
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - goimports
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        # localmodule resolves to this module's path from go.mod, so the import
+        # group cannot drift if the module is ever renamed.
+        - localmodule
+      # Without custom-order the configured sections are only suggestions and
+      # gci falls back to its default precedence, which happens to be the same
+      # order today but is not enforced as written.
+      custom-order: true
+    goimports:
+      local-prefixes:
+        - github.com/N3rdBot/dockerdless
+  exclusions:
+    generated: lax
+    paths:
+      - ^vendor$
+      - ^third_party$

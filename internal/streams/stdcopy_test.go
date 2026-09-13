@@ -26,6 +26,7 @@ type refFrame struct {
 func referenceFrame(stream streams.StreamType, payload []byte) []byte {
 	var hdr [8]byte
 	hdr[0] = byte(stream)
+	//nolint:gosec // G115: test payloads are small fixtures read into memory.
 	binary.BigEndian.PutUint32(hdr[4:], uint32(len(payload)))
 	return append(hdr[:], payload...)
 }
@@ -140,10 +141,12 @@ func TestReaderDecodesReferenceFrames(t *testing.T) {
 // TestDemuxMatchesMobyOnGeneratedStreams feeds the same wire bytes to our
 // demultiplexer and Moby's and requires byte-identical output.
 func TestDemuxMatchesMobyOnGeneratedStreams(t *testing.T) {
+	//nolint:gosec // G404: deterministic payload generator for a framing test, not security-sensitive.
 	rng := rand.New(rand.NewSource(42))
 	var wire bytes.Buffer
 	var wantOut, wantErr bytes.Buffer
 	for range 64 {
+		//nolint:gosec // G115: rng.Intn(2) yields 0 or 1, so the StreamType is 1 or 2.
 		stream := streams.StreamType(1 + rng.Intn(2))
 		payload := make([]byte, rng.Intn(2048))
 		if _, err := rng.Read(payload); err != nil {

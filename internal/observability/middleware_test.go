@@ -74,7 +74,7 @@ func TestMiddlewareCorrelatesAccessLogWithRequestIDAndSpan(t *testing.T) {
 		_, _ = writer.Write([]byte("created"))
 	}))
 
-	request := httptest.NewRequest(http.MethodPost, "/v1.44/containers/create", strings.NewReader("{}"))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/v1.44/containers/create", strings.NewReader("{}"))
 	request.Header.Set(RequestIDHeader, "client-supplied-id")
 	response := httptest.NewRecorder()
 
@@ -132,7 +132,7 @@ func TestMiddlewareGeneratesRequestIDWhenHeaderMissing(t *testing.T) {
 		handlerRequestID = RequestIDFromContext(request.Context())
 	}))
 
-	request := httptest.NewRequest(http.MethodGet, "/_ping", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/_ping", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -165,7 +165,7 @@ func TestMiddlewareContinuesInboundTraceContext(t *testing.T) {
 	carrier := propagation.HeaderCarrier{}
 	otel.GetTextMapPropagator().Inject(upstreamCtx, carrier)
 
-	request := httptest.NewRequest(http.MethodGet, "/version", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/version", nil)
 	request.Header = http.Header(carrier)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

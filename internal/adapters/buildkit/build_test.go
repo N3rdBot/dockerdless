@@ -23,7 +23,7 @@ import (
 func decodeDockerStream(t *testing.T, raw []byte) []dockerMessage {
 	t.Helper()
 	var messages []dockerMessage
-	for _, line := range strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(raw), "\n"), "\n") {
 		if line == "" {
 			continue
 		}

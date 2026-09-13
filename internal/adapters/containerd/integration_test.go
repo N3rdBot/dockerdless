@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
 	containerdclient "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/errdefs"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
 )
 
 const (
@@ -43,10 +44,10 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 
 	ctx := namespaces.WithNamespace(context.Background(), integrationNamespace)
 	adapter := New(client, WithNamespace(integrationNamespace))
-	created := []domain.ContainerID{}
+	created := make([]domain.ContainerID, 0, 2)
 	t.Cleanup(func() { cleanupIntegration(t, client, adapter, created) })
 
-	imageRef := integrationImage(t, ctx, client)
+	imageRef := integrationImage(ctx, t, client)
 
 	shortID, err := adapter.CreateContainer(ctx, Config{
 		Name:       "dockerdless-it-short",
@@ -121,7 +122,7 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	}
 }
 
-func integrationImage(t *testing.T, ctx context.Context, client *containerdclient.Client) string {
+func integrationImage(ctx context.Context, t *testing.T, client *containerdclient.Client) string {
 	t.Helper()
 	if ref := os.Getenv(integrationImageEnv); ref != "" {
 		if _, err := client.GetImage(ctx, ref); err != nil {

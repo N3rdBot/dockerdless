@@ -104,18 +104,23 @@ func fixtureContextDir(t *testing.T) string {
 	fixturesDir := filepath.Join(root, "integration", "fixtures")
 
 	contextDir := t.TempDir()
+	fixturesRoot, err := os.OpenRoot(fixturesDir)
+	if err != nil {
+		t.Fatalf("open fixtures root %s: %v", fixturesDir, err)
+	}
+	defer func() { _ = fixturesRoot.Close() }()
 	for _, name := range []string{"Dockerfile", "marker.txt"} {
-		content, err := os.ReadFile(filepath.Join(fixturesDir, name))
+		content, err := readWithinRoot(fixturesRoot, name)
 		if err != nil {
 			t.Fatalf("read fixture %s: %v", name, err)
 		}
-		if err := os.WriteFile(filepath.Join(contextDir, name), content, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(contextDir, name), content, 0o600); err != nil {
 			t.Fatalf("stage fixture %s: %v", name, err)
 		}
 	}
 
 	helperPath := filepath.Join(contextDir, "dls-helper")
-	build := exec.Command("go", "build", "-o", helperPath, "./integration/fixtures/helper")
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", helperPath, "./integration/fixtures/helper")
 	build.Dir = root
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := build.CombinedOutput(); err != nil {
@@ -134,6 +139,11 @@ func fixtureContextTar(t *testing.T) (io.Reader, string) {
 	}
 	fixturesDir := filepath.Join(root, "integration", "fixtures")
 	contextDir := fixtureContextDir(t)
+	contextRoot, err := os.OpenRoot(contextDir)
+	if err != nil {
+		t.Fatalf("open fixture context root %s: %v", contextDir, err)
+	}
+	defer func() { _ = contextRoot.Close() }()
 
 	var buffer bytes.Buffer
 	writer := tar.NewWriter(&buffer)
@@ -156,7 +166,7 @@ func fixtureContextTar(t *testing.T) (io.Reader, string) {
 		if err := writer.WriteHeader(header); err != nil {
 			return err
 		}
-		content, err := os.ReadFile(path)
+		content, err := readWithinRoot(contextRoot, relative)
 		if err != nil {
 			return err
 		}
@@ -172,4 +182,16 @@ func fixtureContextTar(t *testing.T) (io.Reader, string) {
 		t.Fatalf("close fixture context tar: %v", err)
 	}
 	return bytes.NewReader(buffer.Bytes()), fixturesDir
+}
+
+// readWithinRoot reads name relative to an open root. The root-scoped API
+// refuses symlinks that escape the context directory, closing the TOCTOU window
+// a plain os.ReadFile(path) leaves open inside a filepath.Walk callback (G122).
+func readWithinRoot(root *os.Root, name string) ([]byte, error) {
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	return io.ReadAll(file)
 }

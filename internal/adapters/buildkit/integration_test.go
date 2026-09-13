@@ -13,10 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
 	containerd "github.com/containerd/containerd/v2/client"
 	buildkitclient "github.com/moby/buildkit/client"
 	"go.uber.org/zap"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
 )
 
 const (
@@ -257,7 +258,7 @@ func TestIntegrationBuildkitMalformedDockerfileReportsErrorDetail(t *testing.T) 
 		t.Fatal("Build() error = nil, want malformed Dockerfile failure")
 	}
 
-	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
 		t.Logf("progress: %s", line)
 	}
 	messages := decodeDockerStream(t, out.Bytes())

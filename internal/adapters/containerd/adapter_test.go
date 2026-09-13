@@ -10,9 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
 	containerdclient "github.com/containerd/containerd/v2/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
 )
 
 const testImageRef = "docker.io/library/busybox:latest"
@@ -45,7 +46,7 @@ func mustCreateContainer(t *testing.T, adapter *Adapter, cfg Config) domain.Cont
 	return id
 }
 
-func startTestContainer(t *testing.T, adapter *Adapter, fake *fakeClient, cfg Config) (domain.ContainerID, *fakeContainer, *fakeTask) {
+func startTestContainer(t *testing.T, adapter *Adapter, fake *fakeClient, cfg Config) (domain.ContainerID, *fakeTask) {
 	t.Helper()
 	id := mustCreateContainer(t, adapter, cfg)
 	if err := adapter.Start(context.Background(), id); err != nil {
@@ -59,7 +60,7 @@ func startTestContainer(t *testing.T, adapter *Adapter, fake *fakeClient, cfg Co
 	if task == nil {
 		t.Fatalf("container %q has no task after Start", id)
 	}
-	return id, container, task
+	return id, task
 }
 
 func assertCallOrder(t *testing.T, calls []string, first, second string) {
@@ -177,7 +178,7 @@ func TestStartOnMissingContainerDoesNotCreateTask(t *testing.T) {
 
 func TestStartCreatesTaskWaitBeforeStart(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 
 	status, err := task.Status(context.Background())
 	if err != nil {
@@ -191,7 +192,7 @@ func TestStartCreatesTaskWaitBeforeStart(t *testing.T) {
 
 func TestStartRejectsAlreadyRunningContainer(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, _ := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, _ := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	err := adapter.Start(context.Background(), id)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("Start on running container error = %v, want ErrConflict", err)
@@ -245,7 +246,7 @@ func TestStartWithOptionsAttachesCallerStreams(t *testing.T) {
 
 func TestStopSendsSIGTERMThenSIGKILLAfterTimeout(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setTermExits(false)
 
 	started := time.Now()
@@ -263,7 +264,7 @@ func TestStopSendsSIGTERMThenSIGKILLAfterTimeout(t *testing.T) {
 
 func TestStopReturnsAfterSIGTERMExit(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setTermExits(true)
 
 	if err := adapter.Stop(context.Background(), id, time.Second); err != nil {
@@ -277,7 +278,7 @@ func TestStopReturnsAfterSIGTERMExit(t *testing.T) {
 
 func TestStopIsNoopForStoppedTask(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
 	task.exit(0)
 
 	if err := adapter.Stop(context.Background(), id, time.Second); err != nil {
@@ -298,7 +299,7 @@ func TestStopMissingContainerReturnsNotFound(t *testing.T) {
 
 func TestStopWithZeroTimeoutKillsImmediately(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 
 	if err := adapter.Stop(context.Background(), id, 0); err != nil {
 		t.Fatalf("Stop: %v", err)
@@ -311,7 +312,7 @@ func TestStopWithZeroTimeoutKillsImmediately(t *testing.T) {
 
 func TestResizeSendsSizeToRunningTask(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 
 	if err := adapter.Resize(context.Background(), id, 120, 40); err != nil {
 		t.Fatalf("Resize: %v", err)
@@ -327,7 +328,7 @@ func TestResizeSendsSizeToRunningTask(t *testing.T) {
 
 func TestKillSendsRequestedSignal(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	if err := adapter.Kill(context.Background(), id, syscall.SIGUSR1); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
@@ -339,7 +340,7 @@ func TestKillSendsRequestedSignal(t *testing.T) {
 
 func TestKillOnStoppedTaskReturnsConflict(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
 	task.exit(0)
 	err := adapter.Kill(context.Background(), id, syscall.SIGTERM)
 	if !errors.Is(err, ErrConflict) {
@@ -358,7 +359,7 @@ func TestKillOnMissingTaskReturnsNotFound(t *testing.T) {
 
 func TestWaitReturnsExitCode(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sh", "-c", "exit 42"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sh", "-c", "exit 42"}})
 	task.exit(42)
 
 	result, err := adapter.Wait(context.Background(), id)
@@ -384,7 +385,7 @@ func TestStatusDerivesDockerStateFromTask(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
 	ctx := context.Background()
 
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	state, err := adapter.Status(ctx, id)
 	if err != nil {
 		t.Fatalf("Status: %v", err)
@@ -404,7 +405,7 @@ func TestStatusDerivesDockerStateFromTask(t *testing.T) {
 
 func TestRemoveDeletesTaskContainerSnapshotInOrder(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
 	task.exit(0)
 
 	if err := adapter.Remove(context.Background(), id); err != nil {
@@ -433,7 +434,7 @@ func TestRemoveIsIdempotentForMissingContainer(t *testing.T) {
 
 func TestRemoveRunningContainerReturnsConflict(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, _ := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, _ := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	err := adapter.Remove(context.Background(), id)
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("Remove running container error = %v, want ErrConflict", err)
@@ -446,7 +447,7 @@ func TestRemoveRunningContainerReturnsConflict(t *testing.T) {
 func TestExecCreatesStartsWaitsAndRecordsExitCode(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
 	ctx := context.Background()
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setNextProcess(fakeProcessTemplate{exitOnStart: true, exitCode: 7})
 
 	result, err := adapter.Exec(ctx, id, ExecConfig{Command: []string{"sh", "-c", "exit 7"}})
@@ -484,7 +485,7 @@ func TestExecCreatesStartsWaitsAndRecordsExitCode(t *testing.T) {
 
 func TestExecCancellationCleansUpAndRecordsProcess(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setNextProcess(fakeProcessTemplate{exitOnStart: false})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -516,7 +517,7 @@ func TestExecCancellationCleansUpAndRecordsProcess(t *testing.T) {
 
 func TestExecResizesTTYProcess(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setNextProcess(fakeProcessTemplate{exitOnStart: true, exitCode: 0})
 
 	result, err := adapter.Exec(context.Background(), id, ExecConfig{
@@ -542,7 +543,7 @@ func TestExecResizesTTYProcess(t *testing.T) {
 
 func TestExecSkipsResizeWithoutTTY(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setNextProcess(fakeProcessTemplate{exitOnStart: true, exitCode: 0})
 
 	result, err := adapter.Exec(context.Background(), id, ExecConfig{
@@ -561,7 +562,7 @@ func TestExecSkipsResizeWithoutTTY(t *testing.T) {
 
 func TestExecOnStoppedContainerReturnsConflict(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"true"}})
 	task.exit(0)
 	_, err := adapter.Exec(context.Background(), id, ExecConfig{Command: []string{"sh"}})
 	if !errors.Is(err, ErrConflict) {
@@ -571,7 +572,7 @@ func TestExecOnStoppedContainerReturnsConflict(t *testing.T) {
 
 func TestExecDetachedRecordsRunningProcess(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setNextProcess(fakeProcessTemplate{exitOnStart: false})
 
 	result, err := adapter.Exec(context.Background(), id, ExecConfig{
@@ -601,7 +602,7 @@ func TestExecDetachedRecordsRunningProcess(t *testing.T) {
 
 func TestExecMissingCommandReturnsInvalidArgument(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, _ := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, _ := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	_, err := adapter.Exec(context.Background(), id, ExecConfig{})
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("Exec without command error = %v, want ErrInvalidArgument", err)
@@ -610,7 +611,7 @@ func TestExecMissingCommandReturnsInvalidArgument(t *testing.T) {
 
 func TestExecRecordsFiltersByContainer(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
-	id, _, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
+	id, task := startTestContainer(t, adapter, fake, Config{Command: []string{"sleep", "30"}})
 	task.setNextProcess(fakeProcessTemplate{exitOnStart: true, exitCode: 0})
 	if _, err := adapter.Exec(context.Background(), id, ExecConfig{Command: []string{"sh"}}); err != nil {
 		t.Fatalf("Exec: %v", err)

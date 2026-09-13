@@ -2,17 +2,18 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/image"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/storage"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 const maxBuildContextBytes int64 = 1 << 30
@@ -68,7 +69,11 @@ func (h *handlers) imageCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	auth, err := decodeRegistryAuth(r.Header.Get("X-Registry-Auth"))
 	if err != nil {
-		WriteDockerError(w, err.(*DockerError))
+		WriteDockerError(w, func() *DockerError {
+			target := &DockerError{}
+			_ = errors.As(err, &target)
+			return target
+		}())
 		return
 	}
 	stream := newLazyStreamWriter(w, "application/json")
@@ -84,7 +89,11 @@ func (h *handlers) build(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	auth, err := decodeRegistryAuth(r.Header.Get("X-Registry-Auth"))
 	if err != nil {
-		WriteDockerError(w, err.(*DockerError))
+		WriteDockerError(w, func() *DockerError {
+			target := &DockerError{}
+			_ = errors.As(err, &target)
+			return target
+		}())
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBuildContextBytes)
@@ -186,10 +195,8 @@ func imageInspectResponse(detail ports.ImageDetail) image.InspectResponse {
 // Config.ExposedPorts without a nil check on every container create.
 func imageConfigResponse(config *ports.ImageConfig) *dockerspec.DockerOCIImageConfig {
 	response := &dockerspec.DockerOCIImageConfig{
-		ImageConfig: ocispec.ImageConfig{
-			ExposedPorts: map[string]struct{}{},
-			Volumes:      map[string]struct{}{},
-		},
+		ExposedPorts: map[string]struct{}{},
+		Volumes:      map[string]struct{}{},
 	}
 	if config == nil {
 		return response

@@ -43,7 +43,7 @@ func (s *Store) WatchConfig() error {
 	if err := watcher.Add(filepath.Dir(configFile)); err != nil {
 		closeErr := watcher.Close()
 		if closeErr != nil {
-			return fmt.Errorf("watch configuration directory: %w; close watcher: %v", err, closeErr)
+			return fmt.Errorf("watch configuration directory: %w; close watcher: %w", err, closeErr)
 		}
 		return fmt.Errorf("watch configuration directory: %w", err)
 	}

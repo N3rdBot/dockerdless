@@ -73,11 +73,11 @@ func TestUpgradeStatusAndContentType(t *testing.T) {
 			}))
 			defer server.Close()
 
-			conn, err := net.Dial("tcp", server.Listener.Addr().String())
+			conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", server.Listener.Addr().String())
 			if err != nil {
 				t.Fatalf("dial: %v", err)
 			}
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 
 			upgrade := ""
 			if tt.upgrade {
@@ -86,7 +86,7 @@ func TestUpgradeStatusAndContentType(t *testing.T) {
 			if _, err := fmt.Fprintf(conn, "GET /attach HTTP/1.1\r\nHost: docker\r\n%s\r\n", upgrade); err != nil {
 				t.Fatalf("write request: %v", err)
 			}
-			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 			status, headers := readResponseHead(t, bufio.NewReader(conn))
 			if status != tt.wantStatus {
 				t.Fatalf("status = %q, want %q", status, tt.wantStatus)
@@ -119,7 +119,7 @@ func TestUpgradeAllowsBidirectionalExchange(t *testing.T) {
 			t.Errorf("Upgrade: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		if _, err := io.WriteString(conn, "server-hello\n"); err != nil {
 			t.Errorf("server write: %v", err)
 			return
@@ -133,16 +133,16 @@ func TestUpgradeAllowsBidirectionalExchange(t *testing.T) {
 	}))
 	defer server.Close()
 
-	conn, err := net.Dial("tcp", server.Listener.Addr().String())
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", server.Listener.Addr().String())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if _, err := io.WriteString(conn, "GET /exec HTTP/1.1\r\nHost: docker\r\nUpgrade: tcp\r\nConnection: Upgrade\r\n\r\n"); err != nil {
 		t.Fatalf("write request: %v", err)
 	}
 
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	br := bufio.NewReader(conn)
 	status, _ := readResponseHead(t, br)
 	if status != "HTTP/1.1 101 UPGRADED" {
@@ -201,7 +201,7 @@ func TestProxyBidirectional(t *testing.T) {
 		writeErr <- err
 	}()
 	got := make([]byte, len("to-server"))
-	serverApp.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = serverApp.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.ReadFull(serverApp, got); err != nil {
 		t.Fatalf("reading server side: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestProxyBidirectional(t *testing.T) {
 		writeErr <- err
 	}()
 	back := make([]byte, len("to-client"))
-	clientApp.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = clientApp.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.ReadFull(clientApp, back); err != nil {
 		t.Fatalf("reading client side: %v", err)
 	}
@@ -228,8 +228,8 @@ func TestProxyBidirectional(t *testing.T) {
 		t.Fatalf("server write: %v", err)
 	}
 
-	clientApp.Close()
-	serverApp.Close()
+	_ = clientApp.Close()
+	_ = serverApp.Close()
 	select {
 	case err := <-done:
 		if err != nil {

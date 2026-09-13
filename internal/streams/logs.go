@@ -170,10 +170,11 @@ func ReadLogs(ctx context.Context, path string, opts LogOptions, stdout, stderr 
 			if !opts.Follow {
 				return fmt.Errorf("streams: opening log file %q: %w", path, err)
 			}
-			if sleepErr := sleepCtx(ctx, opts.PollInterval); sleepErr != nil {
-				return nil
+			if sleepErr := sleepCtx(ctx, opts.PollInterval); sleepErr == nil {
+				continue
 			}
-			continue
+			// sleepCtx only fails when ctx is done, which ends the follow cleanly.
+			return nil
 		}
 		stat, statErr := file.Stat()
 		if statErr != nil {
@@ -218,7 +219,7 @@ func flushAvailableLogs(path string, offset *int64, opts LogOptions, stdout, std
 		}
 		return fmt.Errorf("streams: opening log file %q for final flush: %w", path, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	stat, err := file.Stat()
 	if err != nil {
 		return fmt.Errorf("streams: stat log file %q for final flush: %w", path, err)

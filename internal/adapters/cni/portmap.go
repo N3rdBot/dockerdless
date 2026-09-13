@@ -139,7 +139,7 @@ func (a *PortAllocator) Allocate(protocol, hostIP string, requested uint16) (Por
 		return PortAllocation{Protocol: proto, HostIP: ip, HostPort: port}, nil
 	}
 
-	for attempt := 0; attempt < a.attempts; attempt++ {
+	for range a.attempts {
 		port, probeErr := a.probe(proto, ip, 0)
 		if probeErr != nil {
 			return PortAllocation{}, fmt.Errorf("cni: probing free host port: %w", probeErr)
@@ -290,7 +290,7 @@ func probeFreeHostPort(protocol, hostIP string, requested uint16) (uint16, error
 	addr := net.JoinHostPort(hostIP, strconv.Itoa(int(requested)))
 	switch protocol {
 	case protocolUDP:
-		conn, err := net.ListenPacket("udp", addr)
+		conn, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", addr)
 		if err != nil {
 			return 0, err
 		}
@@ -299,6 +299,7 @@ func probeFreeHostPort(protocol, hostIP string, requested uint16) (uint16, error
 		if !ok {
 			return 0, fmt.Errorf("cni: unexpected UDP local address %T", conn.LocalAddr())
 		}
+		//nolint:gosec // G115: kernel-assigned UDP ports are 16-bit by definition.
 		return uint16(udpAddr.Port), nil
 	case protocolTCP:
 		listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
@@ -310,6 +311,7 @@ func probeFreeHostPort(protocol, hostIP string, requested uint16) (uint16, error
 		if !ok {
 			return 0, fmt.Errorf("cni: unexpected TCP local address %T", listener.Addr())
 		}
+		//nolint:gosec // G115: kernel-assigned TCP ports are 16-bit by definition.
 		return uint16(tcpAddr.Port), nil
 	default:
 		return 0, fmt.Errorf("%w: %q", ErrUnsupportedProtocol, protocol)

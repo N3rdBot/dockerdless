@@ -93,6 +93,7 @@ func (w *Writer) Write(p []byte) (int, error) {
 func (w *Writer) writeChunk(p []byte) (int, error) {
 	buf := make([]byte, frameHeaderLen+len(p))
 	buf[frameStreamIndex] = byte(w.stream)
+	//nolint:gosec // G115: len(p) is capped at maxWriteChunk (1 MiB) by Writer.Write.
 	binary.BigEndian.PutUint32(buf[frameSizeIndex:], uint32(len(p)))
 	copy(buf[frameHeaderLen:], p)
 

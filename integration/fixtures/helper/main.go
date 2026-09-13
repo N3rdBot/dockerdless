@@ -5,11 +5,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"time"
+)
+
+// Bounded timeouts keep the fixture server from hanging a test forever (G114).
+const (
+	helperReadHeaderTimeout = 5 * time.Second
+	helperReadTimeout       = 10 * time.Second
+	helperWriteTimeout      = 10 * time.Second
+	helperIdleTimeout       = 30 * time.Second
 )
 
 func main() {
@@ -35,7 +45,7 @@ func serve(port string) error {
 		return fmt.Errorf("invalid port %q", port)
 	}
 	address := net.JoinHostPort("0.0.0.0", port)
-	listener, err := net.Listen("tcp", address)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", address)
 	if err != nil {
 		return err
 	}
@@ -45,5 +55,12 @@ func serve(port string) error {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("dls-helper-ready"))
 	})
-	return http.Serve(listener, mux)
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: helperReadHeaderTimeout,
+		ReadTimeout:       helperReadTimeout,
+		WriteTimeout:      helperWriteTimeout,
+		IdleTimeout:       helperIdleTimeout,
+	}
+	return server.Serve(listener)
 }

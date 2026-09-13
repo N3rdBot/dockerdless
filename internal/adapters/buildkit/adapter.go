@@ -11,11 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	"github.com/containerd/platforms"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"go.uber.org/zap"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 // ErrNoStore reports that an adapter was built without an image store.

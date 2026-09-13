@@ -66,7 +66,7 @@ func (e *dockerMessageError) Is(target error) bool { return target == ports.ErrN
 func (e *dockerMessageError) DockerMessage() string { return e.message }
 
 func TestDecodeJSONBody_rejectsOversizedBody(t *testing.T) {
-	request := httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(`{"Image":"`+strings.Repeat("a", 128)+`"}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/create", strings.NewReader(`{"Image":"`+strings.Repeat("a", 128)+`"}`))
 	recorder := httptest.NewRecorder()
 	var target map[string]any
 

@@ -193,6 +193,7 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	if ctx == nil {
+		//nolint:contextcheck // a nil context has no caller context to inherit.
 		ctx = context.Background()
 	}
 	t.shutdownOnce.Do(func() {

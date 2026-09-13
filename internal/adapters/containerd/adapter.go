@@ -14,11 +14,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	containerdclient "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/errdefs"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 // Containerd labels owned by the adapter. They record Docker semantics that

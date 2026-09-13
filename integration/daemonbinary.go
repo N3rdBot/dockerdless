@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -45,7 +46,7 @@ func buildDaemonBinary() {
 	sharedBuildRoot = dir
 
 	binary := filepath.Join(dir, "dockerdless")
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/dockerdless")
+	cmd := exec.CommandContext(context.Background(), "go", "build", "-o", binary, "./cmd/dockerdless")
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := cmd.CombinedOutput(); err != nil {

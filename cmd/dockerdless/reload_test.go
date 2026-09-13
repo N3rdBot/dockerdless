@@ -9,9 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/N3rdBot/dockerdless/internal/config"
 	"github.com/N3rdBot/dockerdless/internal/observability"
-	"go.uber.org/zap"
 )
 
 func TestConfigReloadAppliesLogLevelThroughDaemonWiring(t *testing.T) {

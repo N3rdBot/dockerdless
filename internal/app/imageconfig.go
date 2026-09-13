@@ -9,10 +9,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	containerdclient "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 // containerdImageConfigs resolves OCI image configuration over a lazily opened

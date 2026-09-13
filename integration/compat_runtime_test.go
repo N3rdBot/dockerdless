@@ -17,6 +17,7 @@ import (
 )
 
 func compatPrivilegedCreateRejected(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -37,6 +38,7 @@ func compatPrivilegedCreateRejected(t *testing.T, daemon *daemonProcess) {
 // testcontainers' wait.ForExec, a nonzero exit code, and a failing wait
 // strategy that must surface an error rather than a false pass.
 func compatWaitForExecAndExitCodes(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	image := ensureFixtureImage(t, daemon, daemon.cleanups)
 
@@ -44,13 +46,11 @@ func compatWaitForExecAndExitCodes(t *testing.T, daemon *daemonProcess) {
 	defer cancel()
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:      image,
-			Name:       uniqueName(t, "tc-exec"),
-			Cmd:        []string{"sh", "-c", "sleep 120"},
-			WaitingFor: wait.ForExec([]string{"sh", "-c", "echo dls-exec-wait"}).WithStartupTimeout(compatWaitTimeout),
-		},
-		Started: true,
+		Image:      image,
+		Name:       uniqueName(t, "tc-exec"),
+		Cmd:        []string{"sh", "-c", "sleep 120"},
+		WaitingFor: wait.ForExec([]string{"sh", "-c", "echo dls-exec-wait"}).WithStartupTimeout(compatWaitTimeout),
+		Started:    true,
 	})
 	if err != nil {
 		t.Fatalf("GenericContainer(wait.ForExec): %v\n--- daemon logs ---\n%s", err, daemon.Logs())
@@ -77,13 +77,11 @@ func compatWaitForExecAndExitCodes(t *testing.T, daemon *daemonProcess) {
 	failingCtx, failingCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer failingCancel()
 	failing, err := testcontainers.GenericContainer(failingCtx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:      image,
-			Name:       uniqueName(t, "tc-exec-fail"),
-			Cmd:        []string{"sh", "-c", "sleep 120"},
-			WaitingFor: wait.ForExec([]string{"false"}).WithStartupTimeout(5 * time.Second),
-		},
-		Started: true,
+		Image:      image,
+		Name:       uniqueName(t, "tc-exec-fail"),
+		Cmd:        []string{"sh", "-c", "sleep 120"},
+		WaitingFor: wait.ForExec([]string{"false"}).WithStartupTimeout(5 * time.Second),
+		Started:    true,
 	})
 	if err == nil {
 		testcontainers.CleanupContainer(t, failing)
@@ -99,6 +97,7 @@ func compatWaitForExecAndExitCodes(t *testing.T, daemon *daemonProcess) {
 // and asserts the created network through both the library and the daemon's
 // network list.
 func compatNetworkCreateInspectListRemove(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	ctx, cancel := context.WithTimeout(context.Background(), compatTestTimeout)
 	defer cancel()
@@ -106,11 +105,9 @@ func compatNetworkCreateInspectListRemove(t *testing.T, daemon *daemonProcess) {
 
 	name := uniqueName(t, "tc-net")
 	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
-		NetworkRequest: testcontainers.NetworkRequest{
-			Name:   name,
-			Driver: "bridge",
-			Labels: map[string]string{"io.dockerdless.test": "compat"},
-		},
+		Name:   name,
+		Driver: "bridge",
+		Labels: map[string]string{"io.dockerdless.test": "compat"},
 	})
 	if err != nil {
 		t.Fatalf("testcontainers GenericNetwork: %v\n--- daemon logs ---\n%s", err, daemon.Logs())
@@ -154,6 +151,7 @@ func compatNetworkCreateInspectListRemove(t *testing.T, daemon *daemonProcess) {
 // compatContainerReuse drives ContainerList-based reuse: the second
 // GenericContainer call must adopt the first container by name.
 func compatContainerReuse(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	image := ensureFixtureImage(t, daemon, daemon.cleanups)
 
@@ -163,13 +161,11 @@ func compatContainerReuse(t *testing.T, daemon *daemonProcess) {
 	const marker = "dls-reuse-marker"
 	name := uniqueName(t, "tc-reuse")
 	first, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:      image,
-			Name:       name,
-			Cmd:        []string{"sh", "-c", "echo " + marker + "; sleep 120"},
-			WaitingFor: wait.ForLog(marker).WithStartupTimeout(compatWaitTimeout),
-		},
-		Started: true,
+		Image:      image,
+		Name:       name,
+		Cmd:        []string{"sh", "-c", "echo " + marker + "; sleep 120"},
+		WaitingFor: wait.ForLog(marker).WithStartupTimeout(compatWaitTimeout),
+		Started:    true,
 	})
 	if err != nil {
 		t.Fatalf("first GenericContainer: %v\n--- daemon logs ---\n%s", err, daemon.Logs())
@@ -177,10 +173,8 @@ func compatContainerReuse(t *testing.T, daemon *daemonProcess) {
 	testcontainers.CleanupContainer(t, first)
 
 	second, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image: image,
-			Name:  name,
-		},
+		Image:   image,
+		Name:    name,
 		Started: true,
 		Reuse:   true,
 	})
@@ -219,6 +213,7 @@ func compatContainerReuse(t *testing.T, daemon *daemonProcess) {
 // compatContainerLifecycle drives create, start, log wait, logs, state, and
 // stop through the library and asserts no reaper container ever appears.
 func compatContainerLifecycle(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	image := ensureFixtureImage(t, daemon, daemon.cleanups)
 

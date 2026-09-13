@@ -64,7 +64,7 @@ func (a *runtimeAdapter) Wait(ctx context.Context, id domain.ContainerID) (ports
 }
 
 func (a *runtimeAdapter) StartWithIO(ctx context.Context, id domain.ContainerID, stdout, stderr io.Writer) error {
-	return a.Adapter.StartWithOptions(ctx, id, containerd.StartOptions{Stdout: stdout, Stderr: stderr})
+	return a.StartWithOptions(ctx, id, containerd.StartOptions{Stdout: stdout, Stderr: stderr})
 }
 
 func (a *runtimeAdapter) Exec(ctx context.Context, id domain.ContainerID, request ports.ExecRequest) (ports.ExecResult, error) {

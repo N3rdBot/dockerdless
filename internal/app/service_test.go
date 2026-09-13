@@ -25,6 +25,7 @@ func staticProbe() cni.PortProbe {
 		if requested != 0 {
 			return requested, nil
 		}
+		//nolint:gosec // G115: the static test allocator starts at 40000.
 		return uint16(next.Add(1)), nil
 	}
 }
@@ -372,7 +373,7 @@ func TestContainerLogs_streamsCRILinesWithTail(t *testing.T) {
 	seedContainer(t, service, "container-1", "web", domain.ContainerStateExited, nil, nil)
 	logContent := "2026-01-01T00:00:00.000000000Z stdout F first\n" +
 		"2026-01-01T00:00:01.000000000Z stdout F second\n"
-	if err := os.WriteFile(service.logPath("container-1"), []byte(logContent), 0o640); err != nil {
+	if err := os.WriteFile(service.logPath("container-1"), []byte(logContent), 0o600); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
 	var stdout bytes.Buffer

@@ -5,10 +5,11 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 func TestRequestedMounts_translatesStructuredBindMount(t *testing.T) {

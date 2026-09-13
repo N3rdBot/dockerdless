@@ -10,12 +10,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/containerd/containerd/v2/core/containers"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/oci"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/opencontainers/runtime-spec/specs-go"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
 )
 
 // Config is the Docker-shaped container configuration the adapter translates
@@ -188,23 +189,25 @@ func userSpecOpt(user string) (oci.SpecOpts, error) {
 		return nil, nil
 	}
 	parts := strings.Split(user, ":")
-	uid, err := strconv.ParseUint(parts[0], 10, 32)
+	parsedUID, err := strconv.ParseUint(parts[0], 10, 32)
 	if err != nil {
 		return nil, fmt.Errorf("%w: user %q: invalid uid", ErrInvalidArgument, user)
 	}
-	var gid uint64
+	uid := uint32(parsedUID)
+	var gid uint32
 	if len(parts) == 2 {
-		gid, err = strconv.ParseUint(parts[1], 10, 32)
-		if err != nil {
+		parsedGID, parseErr := strconv.ParseUint(parts[1], 10, 32)
+		if parseErr != nil {
 			return nil, fmt.Errorf("%w: user %q: invalid gid", ErrInvalidArgument, user)
 		}
+		gid = uint32(parsedGID)
 	}
 	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *oci.Spec) error {
 		if spec.Process == nil {
 			spec.Process = &specs.Process{}
 		}
-		spec.Process.User.UID = uint32(uid)
-		spec.Process.User.GID = uint32(gid)
+		spec.Process.User.UID = uid
+		spec.Process.User.GID = gid
 		return nil
 	}, nil
 }

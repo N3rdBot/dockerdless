@@ -39,10 +39,10 @@ func requireCNIEnvironment(t *testing.T) {
 		}
 	}
 	probe := fmt.Sprintf("dls-probe-%d", os.Getpid())
-	if out, err := exec.Command("ip", "netns", "add", probe).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "ip", "netns", "add", probe).CombinedOutput(); err != nil {
 		t.Skipf("cannot create network namespaces: %v (%s)", err, out)
 	}
-	_ = exec.Command("ip", "netns", "del", probe).Run()
+	_ = exec.CommandContext(t.Context(), "ip", "netns", "del", probe).Run()
 	if hostRouteExists(t, integrationSubnet) {
 		t.Skipf("subnet %s is already routed on the host", integrationSubnet)
 	}
@@ -50,7 +50,7 @@ func requireCNIEnvironment(t *testing.T) {
 
 func hostRouteExists(t *testing.T, subnet string) bool {
 	t.Helper()
-	out, err := exec.Command("ip", "-j", "route", "show").Output()
+	out, err := exec.CommandContext(t.Context(), "ip", "-j", "route", "show").Output()
 	if err != nil {
 		return false
 	}
@@ -59,7 +59,7 @@ func hostRouteExists(t *testing.T, subnet string) bool {
 
 func runCommand(t *testing.T, name string, args ...string) string {
 	t.Helper()
-	out, err := exec.Command(name, args...).CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), name, args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
 	}
@@ -68,7 +68,7 @@ func runCommand(t *testing.T, name string, args ...string) string {
 
 func commandFails(t *testing.T, name string, args ...string) bool {
 	t.Helper()
-	err := exec.Command(name, args...).Run()
+	err := exec.CommandContext(t.Context(), name, args...).Run()
 	return err != nil
 }
 
@@ -78,7 +78,7 @@ func TestLiveCNIBridgeLifecycle(t *testing.T) {
 
 	nsName := fmt.Sprintf("dls-it-%d", os.Getpid())
 	runCommand(t, "ip", "netns", "add", nsName)
-	t.Cleanup(func() { _ = exec.Command("ip", "netns", "del", nsName).Run() })
+	t.Cleanup(func() { _ = exec.CommandContext(context.Background(), "ip", "netns", "del", nsName).Run() })
 	netnsPath := filepath.Join(integrationNetnsDir, nsName)
 
 	adapter := cni.New(cni.Config{
@@ -88,7 +88,7 @@ func TestLiveCNIBridgeLifecycle(t *testing.T) {
 		IPAMDataDir: filepath.Join(t.TempDir(), "ipam"),
 	})
 
-	var connectedContainers []domain.ContainerID
+	connectedContainers := make([]domain.ContainerID, 0, 2)
 
 	id, err := adapter.CreateNetwork(ctx, cni.CreateNetworkRequest{
 		Name:    "itnet",
@@ -112,7 +112,7 @@ func TestLiveCNIBridgeLifecycle(t *testing.T) {
 		t.Fatalf("Resolve: %v", err)
 	}
 	bridgeName := network.Bridge
-	t.Cleanup(func() { _ = exec.Command("ip", "link", "del", bridgeName).Run() })
+	t.Cleanup(func() { _ = exec.CommandContext(context.Background(), "ip", "link", "del", bridgeName).Run() })
 
 	result, err := adapter.Connect(ctx, cni.ConnectRequest{
 		Network:   string(id),
@@ -216,7 +216,7 @@ func checkNetnsAddress(t *testing.T, nsName, wantIP, wantMAC string) {
 
 func checkPortmapRule(t *testing.T, hostPort uint16) {
 	t.Helper()
-	out, err := exec.Command("iptables", "-t", "nat", "-S").CombinedOutput()
+	out, err := exec.CommandContext(t.Context(), "iptables", "-t", "nat", "-S").CombinedOutput()
 	if err != nil {
 		t.Skipf("iptables not usable for portmap verification: %v (%s)", err, out)
 	}
@@ -227,7 +227,7 @@ func checkPortmapRule(t *testing.T, hostPort uint16) {
 
 func checkVethMasterCount(t *testing.T, bridgeName string, want int) {
 	t.Helper()
-	out, err := exec.Command("ip", "-j", "link", "show", "master", bridgeName).Output()
+	out, err := exec.CommandContext(t.Context(), "ip", "-j", "link", "show", "master", bridgeName).Output()
 	if err != nil {
 		if want == 0 {
 			return

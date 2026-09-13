@@ -44,11 +44,11 @@ func TestMapErrorPreservesUnmappedErrors(t *testing.T) {
 		t.Fatalf("mapError(context.Canceled) = %v, want context.Canceled", got)
 	}
 	sentinel := errors.New("transport detail")
-	if got := mapError(sentinel); got != sentinel {
+	if got := mapError(sentinel); !errors.Is(got, sentinel) {
 		t.Fatalf("mapError(unknown) = %v, want the original error", got)
 	}
 	mapped := mapError(errdefs.ErrNotFound)
-	if got := mapError(mapped); got != mapped {
+	if got := mapError(mapped); !errors.Is(got, mapped) {
 		t.Fatalf("mapError must not re-wrap mapped errors: got %v, want %v", got, mapped)
 	}
 }

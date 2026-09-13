@@ -18,7 +18,7 @@ import (
 // file behind after the listener closes so tests can simulate a stale socket.
 func newUnixListener(t *testing.T, socketPath string, mode os.FileMode, keep bool) *net.UnixListener {
 	t.Helper()
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen on %s: %v", socketPath, err)
 	}
@@ -146,7 +146,7 @@ func TestServer_refusesLiveWorldAccessibleSocket(t *testing.T) {
 	}
 
 	// The live listener must still accept connections.
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "unix", socketPath)
 	if err != nil {
 		t.Fatalf("live socket stopped accepting connections: %v", err)
 	}

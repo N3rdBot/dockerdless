@@ -19,10 +19,10 @@ import (
 // of silently dropping the field.
 func TestContainerCreateFieldPolicyIsExhaustive(t *testing.T) {
 	t.Run("Config", func(t *testing.T) {
-		assertFieldPolicyComplete(t, reflect.TypeOf(container.Config{}), configFieldPolicy)
+		assertFieldPolicyComplete(t, reflect.TypeFor[container.Config](), configFieldPolicy)
 	})
 	t.Run("HostConfig", func(t *testing.T) {
-		assertFieldPolicyComplete(t, reflect.TypeOf(container.HostConfig{}), hostConfigFieldPolicy)
+		assertFieldPolicyComplete(t, reflect.TypeFor[container.HostConfig](), hostConfigFieldPolicy)
 	})
 }
 
@@ -62,8 +62,7 @@ func assertFieldPolicyComplete(t *testing.T, structType reflect.Type, policy map
 // struct fields keep their nested name and are not walked.
 func wireFieldNames(structType reflect.Type) []string {
 	var names []string
-	for i := range structType.NumField() {
-		field := structType.Field(i)
+	for field := range structType.Fields() {
 		if !field.IsExported() {
 			continue
 		}
@@ -117,14 +116,14 @@ func TestValidateContainerCreate_rejectsUnclassifiedSemanticFields(t *testing.T)
 		{name: "Config.NetworkDisabled", config: &container.Config{NetworkDisabled: true}, message: "Config.NetworkDisabled is not supported"},
 		{name: "Config.OnBuild", config: &container.Config{OnBuild: []string{"RUN true"}}, message: "Config.OnBuild is not supported"},
 		{name: "Config.StopSignal", config: &container.Config{StopSignal: "SIGKILL"}, message: "Config.StopSignal is not supported"},
-		{name: "Config.StopTimeout", config: &container.Config{StopTimeout: testIntPointer(5)}, message: "Config.StopTimeout is not supported"},
+		{name: "Config.StopTimeout", config: &container.Config{StopTimeout: new(5)}, message: "Config.StopTimeout is not supported"},
 		{name: "HostConfig.ContainerIDFile", host: &container.HostConfig{ContainerIDFile: "/tmp/cid"}, message: "HostConfig.ContainerIDFile is not supported"},
 		{name: "HostConfig.VolumeDriver", host: &container.HostConfig{VolumeDriver: "local"}, message: "HostConfig.VolumeDriver is not supported"},
 		{name: "HostConfig.Annotations", host: &container.HostConfig{Annotations: map[string]string{"k": "v"}}, message: "HostConfig.Annotations is not supported"},
 		{name: "HostConfig.Cgroup", host: &container.HostConfig{Cgroup: "container:abc"}, message: "HostConfig.Cgroup is not supported"},
 		{name: "HostConfig.Links", host: &container.HostConfig{Links: []string{"db:database"}}, message: "HostConfig.Links is not supported"},
 		{name: "HostConfig.StorageOpt", host: &container.HostConfig{StorageOpt: map[string]string{"size": "1G"}}, message: "HostConfig.StorageOpt is not supported"},
-		{name: "HostConfig.Umask", host: &container.HostConfig{Umask: testUint32Pointer(0o022)}, message: "HostConfig.Umask is not supported"},
+		{name: "HostConfig.Umask", host: &container.HostConfig{Umask: new(uint32(0o022))}, message: "HostConfig.Umask is not supported"},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -235,14 +234,6 @@ func mustTestPort(t *testing.T, value string) network.Port {
 		t.Fatalf("parse test port %q: %v", value, err)
 	}
 	return port
-}
-
-func testIntPointer(value int) *int {
-	return &value
-}
-
-func testUint32Pointer(value uint32) *uint32 {
-	return &value
 }
 
 func orDefaultConfig(cfg *container.Config) *container.Config {

@@ -22,6 +22,7 @@ import (
 // POST /images/create. It skips when containerd has no registry egress, which
 // is an environment property, never a pass.
 func compatImagePull(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	requireRegistryEgress(t)
 
@@ -49,6 +50,7 @@ func compatImagePull(t *testing.T, daemon *daemonProcess) {
 // non-nil Config envelope: testcontainers-go dereferences
 // Config.ExposedPorts on every create when the request names no ports.
 func compatImageInspectConfig(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	ctx, cancel := context.WithTimeout(context.Background(), compatTestTimeout)
 	defer cancel()
@@ -79,6 +81,7 @@ func compatImageInspectConfig(t *testing.T, daemon *daemonProcess) {
 // panic: the request names no ports, so the library reads the image config to
 // decide what to expose.
 func compatContainerWithoutExposedPorts(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	image := ensureFixtureImage(t, daemon, daemon.cleanups)
 
@@ -87,13 +90,11 @@ func compatContainerWithoutExposedPorts(t *testing.T, daemon *daemonProcess) {
 
 	const marker = "dls-no-ports"
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:      image,
-			Name:       uniqueName(t, "tc-noports"),
-			Cmd:        []string{"sh", "-c", "echo " + marker + "; sleep 120"},
-			WaitingFor: wait.ForLog(marker).WithStartupTimeout(compatWaitTimeout),
-		},
-		Started: true,
+		Image:      image,
+		Name:       uniqueName(t, "tc-noports"),
+		Cmd:        []string{"sh", "-c", "echo " + marker + "; sleep 120"},
+		WaitingFor: wait.ForLog(marker).WithStartupTimeout(compatWaitTimeout),
+		Started:    true,
 	})
 	if err != nil {
 		t.Fatalf("GenericContainer without ExposedPorts: %v\n--- daemon logs ---\n%s", err, daemon.Logs())
@@ -128,6 +129,7 @@ func compatContainerWithoutExposedPorts(t *testing.T, daemon *daemonProcess) {
 // mapping equality against inspect, wait.ForHTTP, container logs, and
 // stop/remove including the image delete route.
 func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	configureTestcontainers(t, daemon)
 	ctx, cancel := context.WithTimeout(context.Background(), compatTestTimeout)
 	defer cancel()
@@ -139,16 +141,12 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 	name := uniqueName(t, "tc-http")
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			FromDockerfile: testcontainers.FromDockerfile{
-				Context: contextDir,
-				Repo:    repo,
-				Tag:     "latest",
-			},
-			Name:       name,
-			WaitingFor: wait.ForHTTP("/").WithPort("8080/tcp").WithStartupTimeout(compatWaitTimeout),
-		},
-		Started: true,
+		Context:    contextDir,
+		Repo:       repo,
+		Tag:        "latest",
+		Name:       name,
+		WaitingFor: wait.ForHTTP("/").WithPort("8080/tcp").WithStartupTimeout(compatWaitTimeout),
+		Started:    true,
 	})
 	if err != nil {
 		t.Fatalf("GenericContainer(FromDockerfile, wait.ForHTTP): %v\n--- daemon logs ---\n%s", err, daemon.Logs())
@@ -222,7 +220,11 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 		Transport: &http.Transport{Proxy: nil},
 	}
 	publishHost := hostPublishAddress(t)
-	response, err := httpClient.Get("http://" + net.JoinHostPort(publishHost, mapped.Port()) + "/")
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(publishHost, mapped.Port())+"/", nil)
+	if err != nil {
+		t.Fatalf("build GET http://%s:%s/: %v", publishHost, mapped.Port(), err)
+	}
+	response, err := httpClient.Do(request)
 	if err != nil {
 		t.Fatalf("GET http://%s:%s/: %v", publishHost, mapped.Port(), err)
 	}

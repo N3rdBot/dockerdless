@@ -9,10 +9,11 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 const (
@@ -53,7 +54,7 @@ func TestRegistryAuthNeverAppearsInResponsesOrLogs(t *testing.T) {
 		"/images/create?fromImage=alpine:3.20",
 		"/build?t=leak-test",
 	} {
-		request, err := http.NewRequest(http.MethodPost, path, http.NoBody)
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, path, http.NoBody)
 		if err != nil {
 			t.Fatalf("new request: %v", err)
 		}

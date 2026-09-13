@@ -73,7 +73,7 @@ func TestDaemonFailureSemantics(t *testing.T) {
 	}
 	removeContainer(t, daemon, created.ID, name)
 
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	probe, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve a host port: %v", err)
 	}

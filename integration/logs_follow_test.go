@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestContainerLogsFollowEndsWhenContainerExits(t *testing.T) {
 	started := time.Now()
 	go func() {
 		_, copyErr := stdcopy.StdCopy(&stdout, &stderr, stream)
-		if copyErr != nil && copyErr != io.EOF {
+		if copyErr != nil && !errors.Is(copyErr, io.EOF) {
 			result <- copyErr
 			return
 		}

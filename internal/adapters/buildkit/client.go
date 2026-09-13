@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -183,7 +184,7 @@ func (s *ContainerdStore) Pull(ctx context.Context, ref string, opts PullOptions
 		return ImageRecord{}, err
 	}
 
-	remoteOpts := []containerd.RemoteOpt{containerd.WithResolver(newResolver(opts.Auth, normalized)), containerd.WithPullUnpack}
+	remoteOpts := []containerd.RemoteOpt{containerd.WithResolver(newResolver(ctx, opts.Auth, normalized)), containerd.WithPullUnpack}
 	if s.snapshotter != "" {
 		remoteOpts = append(remoteOpts, containerd.WithPullSnapshotter(s.snapshotter))
 	}
@@ -398,12 +399,7 @@ func appendUnique(values []string, additions ...string) []string {
 }
 
 func containsString(values []string, value string) bool {
-	for _, existing := range values {
-		if existing == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, value)
 }
 
 // translateStoreErr normalizes containerd's not-found errors to ErrNotFound so

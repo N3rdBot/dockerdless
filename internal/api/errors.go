@@ -188,8 +188,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, limit int64, target 
 	}
 	decoder := json.NewDecoder(body)
 	if err := decoder.Decode(target); err != nil {
-		var maxBytes *http.MaxBytesError
-		if errors.As(err, &maxBytes) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			WriteDockerError(w, NewInvalidParameter("request body is too large"))
 			return false
 		}
@@ -244,7 +243,7 @@ func WriteDockerError(w http.ResponseWriter, apiError *DockerError) {
 		apiError = NewServerError("")
 	}
 
-	w.Header().Set("Content-Type", string(jsonMediaType))
+	w.Header().Set("Content-Type", jsonMediaType)
 	w.WriteHeader(apiError.StatusCode())
 	if err := json.NewEncoder(w).Encode(apiError); err != nil {
 		return

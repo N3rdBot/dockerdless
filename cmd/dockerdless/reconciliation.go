@@ -8,12 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
-	"github.com/N3rdBot/dockerdless/internal/observability"
 	containerdclient "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/errdefs"
 	"go.uber.org/zap"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
+	"github.com/N3rdBot/dockerdless/internal/observability"
 )
 
 type snapshotLoader func(context.Context) ([]domain.Container, []domain.TaskSnapshot, error)

@@ -98,11 +98,13 @@ func (s *Service) ExecStart(ctx context.Context, execID string, request ports.Ex
 		User:       pending.user,
 		TTY:        pending.tty,
 		Detach:     request.Detach,
-		Width:      uint32(request.Width),
-		Height:     uint32(request.Height),
-		Stdin:      stdin,
-		Stdout:     stdout,
-		Stderr:     stderr,
+		//nolint:gosec // G115: terminal width/height come from a JSON uint and fit uint32.
+		Width: uint32(request.Width),
+		//nolint:gosec // G115: terminal width/height come from a JSON uint and fit uint32.
+		Height: uint32(request.Height),
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stderr,
 	})
 	if err != nil {
 		return 0, translateError(err)

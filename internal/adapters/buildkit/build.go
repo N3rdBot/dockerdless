@@ -121,15 +121,13 @@ func (a *Adapter) Build(ctx context.Context, request BuildRequest, out io.Writer
 	translate := newBuildProgress(progress)
 	var translateErr error
 	var translator sync.WaitGroup
-	translator.Add(1)
-	go func() {
-		defer translator.Done()
+	translator.Go(func() {
 		for status := range statusCh {
 			if translateErr == nil {
 				translateErr = translate.Translate(status)
 			}
 		}
-	}()
+	})
 
 	result, solveErr := a.solver.Solve(ctx, solveOptions, statusCh)
 	translator.Wait()
@@ -217,7 +215,7 @@ func extractTarContext(reader io.Reader, root string) error {
 	if err != nil {
 		return fmt.Errorf("%w: open context root: %w", ErrInvalidContext, err)
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 
 	tarReader := tar.NewReader(reader)
 	for {
@@ -272,7 +270,7 @@ func writeTarFile(dir *os.Root, name string, header *tar.Header, reader io.Reade
 	if err := ensureParent(dir, name); err != nil {
 		return err
 	}
-	mode := fs.FileMode(header.Mode) & 0o777
+	mode := fs.FileMode(header.Mode & 0o777)
 	if mode == 0 {
 		mode = 0o644
 	}
@@ -280,7 +278,7 @@ func writeTarFile(dir *os.Root, name string, header *tar.Header, reader io.Reade
 	if err != nil {
 		return fmt.Errorf("%w: create file %q: %w", ErrInvalidContext, name, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if _, err := io.Copy(file, reader); err != nil {
 		return fmt.Errorf("%w: write file %q: %w", ErrInvalidContext, name, err)
@@ -327,7 +325,7 @@ func safeTarPath(name string) (string, error) {
 }
 
 func directoryMode(header *tar.Header) fs.FileMode {
-	mode := fs.FileMode(header.Mode) & 0o777
+	mode := fs.FileMode(header.Mode & 0o777)
 	if mode == 0 {
 		mode = 0o755
 	}

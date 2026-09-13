@@ -53,7 +53,7 @@ func TestAllocateDynamicPortIsNonzero(t *testing.T) {
 // allocation instead of publishing a port it cannot own.
 func TestAllocateRetriesWhenProbeCollides(t *testing.T) {
 	var calls int
-	a := cni.NewPortAllocator(stubProbe(func(_, _ string, requested uint16) (uint16, error) {
+	a := cni.NewPortAllocator(stubProbe(func(_, _ string, _ uint16) (uint16, error) {
 		calls++
 		if calls < 3 {
 			return 51000, nil
@@ -165,7 +165,7 @@ func TestAllocateBindingsFillsConcretePorts(t *testing.T) {
 		if b.HostPort == 0 {
 			t.Fatalf("binding %d still has host port 0", i)
 		}
-		if b.Protocol != bindings[i].Protocol && !(bindings[i].Protocol == "" && b.Protocol == "tcp") {
+		if b.Protocol != bindings[i].Protocol && (bindings[i].Protocol != "" || b.Protocol != "tcp") {
 			t.Fatalf("binding %d protocol = %q, want %q", i, b.Protocol, bindings[i].Protocol)
 		}
 	}

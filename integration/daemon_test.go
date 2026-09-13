@@ -5,6 +5,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -220,7 +221,7 @@ func readContainerLogs(t *testing.T, api *client.Client, containerID, marker str
 		_, copyErr := stdcopy.StdCopy(&out, &errOut, stream)
 		_ = stream.Close()
 		cancel()
-		if copyErr != nil && copyErr != io.EOF {
+		if copyErr != nil && !errors.Is(copyErr, io.EOF) {
 			t.Fatalf("demux container logs: %v", copyErr)
 		}
 		stdout, stderr = out.String(), errOut.String()

@@ -17,9 +17,9 @@ import (
 
 const (
 	// MediaTypeRawStream is Docker's content type for an unframed TTY stream.
-	MediaTypeRawStream = string(types.MediaTypeRawStream)
+	MediaTypeRawStream = types.MediaTypeRawStream
 	// MediaTypeMultiplexedStream is Docker's content type for framed streams.
-	MediaTypeMultiplexedStream = string(types.MediaTypeMultiplexedStream)
+	MediaTypeMultiplexedStream = types.MediaTypeMultiplexedStream
 )
 
 // ErrNotHijackable is returned when the response writer chain offers no

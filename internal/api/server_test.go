@@ -47,7 +47,11 @@ func TestServer_bindsSocketWith0660AndServesRequests(t *testing.T) {
 		t.Fatalf("expected socket permissions 0660, got %04o", perm)
 	}
 
-	response, err := unixHTTPClient(socketPath).Get("http://unix/_ping")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://unix/_ping", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	response, err := unixHTTPClient(socketPath).Do(request)
 	if err != nil {
 		t.Fatalf("request over unix socket: %v", err)
 	}
@@ -70,7 +74,7 @@ func TestServer_bindsSocketWith0660AndServesRequests(t *testing.T) {
 
 func TestServer_removesStaleSocketFile(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "dockerdless.sock")
-	stale, err := net.Listen("unix", socketPath)
+	stale, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen stale socket: %v", err)
 	}
@@ -96,7 +100,7 @@ func TestServer_removesStaleSocketFile(t *testing.T) {
 
 func TestServer_refusesLiveSocket(t *testing.T) {
 	socketPath := filepath.Join(t.TempDir(), "dockerdless.sock")
-	live, err := net.Listen("unix", socketPath)
+	live, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen live socket: %v", err)
 	}
@@ -124,7 +128,11 @@ func TestServer_runShutsDownGracefullyOnContextCancel(t *testing.T) {
 	go func() { runErr <- server.Run(ctx) }()
 	waitForSocket(t, socketPath)
 
-	response, err := unixHTTPClient(socketPath).Get("http://unix/_ping")
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://unix/_ping", nil)
+	if err != nil {
+		t.Fatalf("build request before cancel: %v", err)
+	}
+	response, err := unixHTTPClient(socketPath).Do(request)
 	if err != nil {
 		t.Fatalf("request before cancel: %v", err)
 	}

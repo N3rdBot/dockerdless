@@ -8,10 +8,11 @@ import (
 	"io"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/ports"
-	"go.uber.org/zap"
 )
 
 // ImageInspect implements GET /images/{name}/json.
@@ -20,7 +21,7 @@ func (s *Service) ImageInspect(ctx context.Context, ref string) (ports.ImageDeta
 	if err != nil {
 		mapped := translateError(err)
 		if errors.Is(mapped, ports.ErrNotFound) {
-			return ports.ImageDetail{}, newDockerError(ports.ErrNotFound, fmt.Sprintf("No such image: %s", ref), err)
+			return ports.ImageDetail{}, newDockerError(ports.ErrNotFound, "No such image: "+ref, err)
 		}
 		return ports.ImageDetail{}, mapped
 	}
@@ -63,7 +64,7 @@ func (s *Service) ImageRemove(ctx context.Context, ref string, force bool) (port
 	if err != nil {
 		mapped := translateError(err)
 		if errors.Is(mapped, ports.ErrNotFound) {
-			return ports.ImageRemoveResult{}, newDockerError(ports.ErrNotFound, fmt.Sprintf("No such image: %s", ref), err)
+			return ports.ImageRemoveResult{}, newDockerError(ports.ErrNotFound, "No such image: "+ref, err)
 		}
 		return ports.ImageRemoveResult{}, mapped
 	}
@@ -205,8 +206,7 @@ func (s *Service) ImageBuild(ctx context.Context, request ports.BuildRequest, ou
 		return invalidError("build context is required")
 	}
 	if err := s.images.Build(ctx, request, out); err != nil {
-		var buildErr *buildkit.BuildError
-		if errors.As(err, &buildErr) {
+		if buildErr, ok := errors.AsType[*buildkit.BuildError](err); ok {
 			return newDockerError(kindForStatus(buildErr.StatusCode()), buildErr.Message, err)
 		}
 		return translateError(err)

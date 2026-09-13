@@ -6,10 +6,7 @@ import (
 	"testing"
 
 	"github.com/N3rdBot/dockerdless/internal/domain"
-	"github.com/N3rdBot/dockerdless/internal/ports"
 )
-
-var _ ports.State = (*domain.Registry)(nil)
 
 func TestRegistryStateInterfaceAndRename(t *testing.T) {
 	ctx := context.Background()
@@ -34,9 +31,8 @@ func TestRegistryStateInterfaceAndRename(t *testing.T) {
 		State:       domain.ContainerStateRunning,
 	}
 	registry := domain.NewRegistry()
-	var state ports.State = registry
 
-	if err := state.Save(ctx, container); err != nil {
+	if err := registry.Save(ctx, container); err != nil {
 		t.Fatalf("save container: %v", err)
 	}
 	if err := registry.Rename(id, "after-rename"); err != nil {
@@ -53,7 +49,7 @@ func TestRegistryStateInterfaceAndRename(t *testing.T) {
 		t.Fatalf("expected renamed container ID %q, got %q", id, byName.ID)
 	}
 
-	byID, err := state.Get(ctx, id)
+	byID, err := registry.Get(ctx, id)
 	if err != nil {
 		t.Fatalf("get by ID: %v", err)
 	}
@@ -64,7 +60,7 @@ func TestRegistryStateInterfaceAndRename(t *testing.T) {
 		t.Fatalf("expected image reference %q, got %q", image, byID.ImageReference)
 	}
 	byID.Labels["role"] = "mutated-copy"
-	again, err := state.Get(ctx, id)
+	again, err := registry.Get(ctx, id)
 	if err != nil {
 		t.Fatalf("get defensive copy: %v", err)
 	}
@@ -75,10 +71,10 @@ func TestRegistryStateInterfaceAndRename(t *testing.T) {
 	if got := registry.List(); len(got) != 1 || got[0].ID != id {
 		t.Fatalf("expected one listed container %q, got %#v", id, got)
 	}
-	if err := state.Remove(ctx, id); err != nil {
+	if err := registry.Remove(ctx, id); err != nil {
 		t.Fatalf("remove container: %v", err)
 	}
-	if _, err := state.Get(ctx, id); !errors.Is(err, domain.ErrContainerNotFound) {
+	if _, err := registry.Get(ctx, id); !errors.Is(err, domain.ErrContainerNotFound) {
 		t.Fatalf("expected removed container to be absent, got %v", err)
 	}
 }

@@ -204,7 +204,7 @@ func TestRouter_containerCreateUnknownImageReturnsDocker404(t *testing.T) {
 		},
 	}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
-	request := httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(`{"Image":"missing:latest"}`))
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/containers/create", strings.NewReader(`{"Image":"missing:latest"}`))
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 

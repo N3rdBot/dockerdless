@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/N3rdBot/dockerdless/internal/ports"
 	"github.com/moby/moby/api/types/image"
+
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 // TestImageInspectResponse_alwaysCarriesConfigWithExposedPorts guards the
@@ -107,7 +108,7 @@ func TestHandlers_imageInspectHTTP_emitsNonNullConfig(t *testing.T) {
 		}, nil
 	}}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
-	request := httptest.NewRequest(http.MethodGet, "/v1.44/images/dls-compat:latest/json", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/images/dls-compat:latest/json", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -141,7 +142,7 @@ func TestHandlers_imageRemove_returnsDeleteEnvelopeAndForwardsOptions(t *testing
 		return ports.ImageRemoveResult{ID: "sha256:abc", Untagged: "alpine:3.20"}, nil
 	}}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
-	request := httptest.NewRequest(http.MethodDelete, "/v1.44/images/alpine:3.20?force=1&noprune=1", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/v1.44/images/alpine:3.20?force=1&noprune=1", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -171,7 +172,7 @@ func TestHandlers_imageRemove_missingImageIsDocker404(t *testing.T) {
 		return ports.ImageRemoveResult{}, fmt.Errorf("%w: No such image: gone:latest", ports.ErrNotFound)
 	}}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
-	request := httptest.NewRequest(http.MethodDelete, "/v1.44/images/gone:latest", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/v1.44/images/gone:latest", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -193,7 +194,7 @@ func TestHandlers_imageRemove_inUseImageIsDocker409(t *testing.T) {
 			ports.ErrConflict)
 	}}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
-	request := httptest.NewRequest(http.MethodDelete, "/v1.44/images/alpine:3.20", nil)
+	request := httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/v1.44/images/alpine:3.20", nil)
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)

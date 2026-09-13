@@ -11,12 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
 	"github.com/N3rdBot/dockerdless/internal/adapters/cni"
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/ports"
 	"github.com/N3rdBot/dockerdless/internal/streams"
-	"go.uber.org/zap"
 )
 
 var containerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
@@ -53,7 +54,7 @@ func (s *Service) ContainerCreate(ctx context.Context, request ports.ContainerCr
 	if err != nil {
 		mapped := translateError(err)
 		if errors.Is(mapped, ports.ErrNotFound) {
-			return ports.ContainerCreateResult{}, newDockerError(ports.ErrNotFound, fmt.Sprintf("No such image: %s", request.Image), err)
+			return ports.ContainerCreateResult{}, newDockerError(ports.ErrNotFound, "No such image: "+request.Image, err)
 		}
 		return ports.ContainerCreateResult{}, mapped
 	}

@@ -130,7 +130,7 @@ func (a *RegistryAuth) matchesHost(refHost, host string) bool {
 
 // newResolver builds a containerd resolver that applies the credentials to
 // matching hosts. A nil auth produces an anonymous resolver.
-func newResolver(auth *RegistryAuth, ref string) remotes.Resolver {
+func newResolver(ctx context.Context, auth *RegistryAuth, ref string) remotes.Resolver {
 	refHost := referenceHost(ref)
 
 	options := dockerconfig.HostOptions{}
@@ -144,7 +144,7 @@ func newResolver(auth *RegistryAuth, ref string) remotes.Resolver {
 		}
 	}
 
-	hosts := dockerconfig.ConfigureHosts(context.Background(), options)
+	hosts := dockerconfig.ConfigureHosts(ctx, options)
 	if auth != nil && auth.RegistryToken != "" {
 		base := hosts
 		hosts = func(name string) ([]docker.RegistryHost, error) {

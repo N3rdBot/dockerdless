@@ -66,7 +66,10 @@ func startDaemon(t *testing.T, prerequisites prerequisites) *daemonProcess {
 	}
 
 	logs := &lockedBuffer{}
-	cmd := exec.Command(binary)
+	// The daemon's lifetime is bounded by Stop (SIGTERM then SIGKILL on
+	// timeout), not by a request context: exec.CommandContext must therefore
+	// carry an uncancellable context so test cleanup never races the process.
+	cmd := exec.CommandContext(context.Background(), binary)
 	cmd.Dir = tempRoot
 	cmd.Env = append(os.Environ(),
 		"DOCKERDLESS_SOCKET_PATH="+socketPath,
@@ -106,8 +109,8 @@ func startDaemon(t *testing.T, prerequisites prerequisites) *daemonProcess {
 	// containerd sweep, then leftover bridges, and finally the daemon stop.
 	daemon.cleanups = newCleanupRegistry(t)
 	daemon.cleanups.add("stop dockerdless daemon", daemon.Stop)
-	daemon.cleanups.add("delete leftover CNI bridge devices", func(context.Context) error {
-		return deleteLeftoverBridges(cniConfigDir)
+	daemon.cleanups.add("delete leftover CNI bridge devices", func(ctx context.Context) error {
+		return deleteLeftoverBridges(ctx, cniConfigDir)
 	})
 	daemon.cleanups.add("sweep leftover adapter containers and images", func(ctx context.Context) error {
 		return sweepAdapterState(ctx, prerequisites.containerdSocket, prerequisites.namespace, daemon.namePrefix)
@@ -116,7 +119,7 @@ func startDaemon(t *testing.T, prerequisites prerequisites) *daemonProcess {
 	if err := waitForDaemonReady(t.Context(), daemon); err != nil {
 		t.Fatalf("dockerdless daemon never became ready: %v\n--- daemon logs ---\n%s", err, logs.String())
 	}
-	cli, err := client.New(client.WithHost(daemon.Host()), client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.WithHost(daemon.Host()))
 	if err != nil {
 		t.Fatalf("create daemon API client: %v", err)
 	}
@@ -160,7 +163,7 @@ func waitForDaemonReady(ctx context.Context, daemon *daemonProcess) error {
 		case <-ctx.Done():
 			return fmt.Errorf("last readiness error: %w", lastError)
 		case <-daemon.done:
-			return fmt.Errorf("daemon exited during startup")
+			return errors.New("daemon exited during startup")
 		case <-ticker.C:
 		}
 	}
@@ -195,7 +198,7 @@ func (d *daemonProcess) Stop(ctx context.Context) error {
 	return d.stopErr
 }
 
-func (d *daemonProcess) stop(ctx context.Context) error {
+func (d *daemonProcess) stop(_ context.Context) error {
 	if d.client != nil {
 		_ = d.client.Close()
 	}
@@ -233,7 +236,7 @@ func (d *daemonProcess) stop(ctx context.Context) error {
 	}
 
 	if _, statErr := os.Stat(d.socketPath); !os.IsNotExist(statErr) {
-		problems = append(problems, fmt.Errorf("socket %s still present after daemon exit (stat error %v)", d.socketPath, statErr))
+		problems = append(problems, fmt.Errorf("socket %s still present after daemon exit (stat error %w)", d.socketPath, statErr))
 	}
 	return errors.Join(problems...)
 }

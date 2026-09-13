@@ -14,14 +14,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/N3rdBot/dockerdless/internal/domain"
-	"github.com/N3rdBot/dockerdless/internal/ports"
-	"github.com/N3rdBot/dockerdless/internal/streams"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/storage"
 	"go.uber.org/zap"
+
+	"github.com/N3rdBot/dockerdless/internal/domain"
+	"github.com/N3rdBot/dockerdless/internal/ports"
+	"github.com/N3rdBot/dockerdless/internal/streams"
 )
 
 const defaultContainerRuntime = "io.containerd.runc.v2"
@@ -481,6 +482,7 @@ func portSummaries(portMap network.PortMap) []container.PortSummary {
 		if len(bindings) > 0 {
 			summary.IP = bindings[0].HostIP
 			if parsed, err := strconv.Atoi(bindings[0].HostPort); err == nil {
+				//nolint:gosec // G115: host ports are validated to 0-65535 at binding creation.
 				summary.PublicPort = uint16(parsed)
 			}
 		}

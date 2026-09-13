@@ -2,6 +2,7 @@ package cni
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -281,7 +282,9 @@ func addIPv4(addr netip.Addr, delta uint32) netip.Addr {
 	octets := addr.As4()
 	value := uint32(octets[0])<<24 | uint32(octets[1])<<16 | uint32(octets[2])<<8 | uint32(octets[3])
 	value += delta
-	return netip.AddrFrom4([4]byte{byte(value >> 24), byte(value >> 16), byte(value >> 8), byte(value)})
+	var sum [4]byte
+	binary.BigEndian.PutUint32(sum[:], value)
+	return netip.AddrFrom4(sum)
 }
 
 func defaultGatewayFor(prefix netip.Prefix) string {

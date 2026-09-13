@@ -95,7 +95,7 @@ func TestRegistryAuthRedactsSecretsInFormatting(t *testing.T) {
 	}
 	rendered := []string{
 		fmt.Sprintf("%v", auth),
-		fmt.Sprintf("%s", auth),
+		auth.String(),
 		fmt.Sprintf("%#v", auth),
 		fmt.Sprint(&auth),
 		fmt.Sprintf("%+v", &auth),

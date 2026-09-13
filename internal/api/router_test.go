@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 func TestRouter_baselinePingReturnsOK(t *testing.T) {
 	// Given
 	handler := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/_ping", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/_ping", nil)
 	recorder := httptest.NewRecorder()
 
 	// When
@@ -30,7 +31,7 @@ func TestRouter_baselinePingReturnsOK(t *testing.T) {
 func TestRouter_baselineVersionReturnsJSON(t *testing.T) {
 	// Given
 	handler := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/version", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/version", nil)
 	recorder := httptest.NewRecorder()
 
 	// When
@@ -40,7 +41,7 @@ func TestRouter_baselineVersionReturnsJSON(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("expected /version status %d, got %d", http.StatusOK, recorder.Code)
 	}
-	if got := recorder.Header().Get("Content-Type"); got != string(jsonMediaType) {
+	if got := recorder.Header().Get("Content-Type"); got != jsonMediaType {
 		t.Fatalf("expected /version content type %q, got %q", jsonMediaType, got)
 	}
 	var response struct {
@@ -61,7 +62,7 @@ func TestRouter_baselineVersionReturnsJSON(t *testing.T) {
 func TestRouter_rejectsVersionBelowMinimumWithDockerError(t *testing.T) {
 	// Given
 	handler := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/v1.0/info", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.0/info", nil)
 	recorder := httptest.NewRecorder()
 
 	// When
@@ -74,7 +75,7 @@ func TestRouter_rejectsVersionBelowMinimumWithDockerError(t *testing.T) {
 func TestRouter_rejectsVersionAboveMaximumWithDockerError(t *testing.T) {
 	// Given
 	handler := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/v9.99/info", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v9.99/info", nil)
 	recorder := httptest.NewRecorder()
 
 	// When
@@ -89,7 +90,7 @@ func assertVersionUnsupportedResponse(t *testing.T, recorder *httptest.ResponseR
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected version rejection status %d, got %d", http.StatusBadRequest, recorder.Code)
 	}
-	if got := recorder.Header().Get("Content-Type"); got != string(jsonMediaType) {
+	if got := recorder.Header().Get("Content-Type"); got != jsonMediaType {
 		t.Fatalf("expected version rejection content type %q, got %q", jsonMediaType, got)
 	}
 	var response struct {
@@ -111,7 +112,7 @@ func TestRouter_setsCompatibilityHeadersOnEveryResponse(t *testing.T) {
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			// When
-			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, req)
 
@@ -132,7 +133,7 @@ func TestRouter_setsCompatibilityHeadersOnEveryResponse(t *testing.T) {
 func TestRouter_returnsNotImplementedForRecognizedUnsupportedRoute(t *testing.T) {
 	// Given
 	handler := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/v1.44/images/json", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/images/json", nil)
 	recorder := httptest.NewRecorder()
 
 	// When
@@ -148,7 +149,7 @@ func TestRouter_returnsNotImplementedForRecognizedUnsupportedRoute(t *testing.T)
 func TestRouter_returnsNotFoundForUnknownRoute(t *testing.T) {
 	// Given
 	handler := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/v1.44/unknown", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/unknown", nil)
 	recorder := httptest.NewRecorder()
 
 	// When
@@ -164,7 +165,7 @@ func TestRouter_returnsNotFoundForUnknownRoute(t *testing.T) {
 func TestRouter_matchesVersionedParameterizedRoute(t *testing.T) {
 	// Given
 	handler := NewRouter()
-	req := httptest.NewRequest(http.MethodGet, "/v1.44/images/library/alpine/json", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/images/library/alpine/json", nil)
 	recorder := httptest.NewRecorder()
 
 	// When
@@ -198,7 +199,7 @@ func TestRouter_manualHTTPRoundTrip(t *testing.T) {
 	for _, test := range requests {
 		t.Run(test.method+" "+test.path, func(t *testing.T) {
 			// When
-			response, err := manualRequest(server.URL+test.path, test.method)
+			response, err := manualRequest(t.Context(), server.URL+test.path, test.method)
 			if err != nil {
 				t.Fatalf("manual HTTP request: %v", err)
 			}
@@ -225,16 +226,12 @@ type manualResponse struct {
 	body           string
 }
 
-func manualRequest(url, method string) (manualResponse, error) {
-	var (
-		response *http.Response
-		err      error
-	)
-	if method == http.MethodHead {
-		response, err = http.Head(url)
-	} else {
-		response, err = http.Get(url)
+func manualRequest(ctx context.Context, url, method string) (manualResponse, error) {
+	request, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return manualResponse{}, err
 	}
+	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		return manualResponse{}, err
 	}
@@ -256,7 +253,7 @@ func manualRequest(url, method string) (manualResponse, error) {
 
 func assertDockerEnvelope(t *testing.T, recorder *httptest.ResponseRecorder, message string) {
 	t.Helper()
-	if got := recorder.Header().Get("Content-Type"); got != string(jsonMediaType) {
+	if got := recorder.Header().Get("Content-Type"); got != jsonMediaType {
 		t.Fatalf("expected Docker content type %q, got %q", jsonMediaType, got)
 	}
 	var response struct {

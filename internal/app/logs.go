@@ -9,9 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/streams"
-	"go.uber.org/zap"
 )
 
 const logFileMode = 0o640

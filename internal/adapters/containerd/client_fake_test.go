@@ -353,6 +353,7 @@ func (t *fakeTask) Kill(_ context.Context, signal syscall.Signal) error {
 	exit := (signal == syscall.SIGTERM && t.termExits) || (signal == syscall.SIGKILL && t.killExits)
 	t.mu.Unlock()
 	if exit {
+		//nolint:gosec // G115: the fake only records SIGTERM/SIGKILL exit codes.
 		t.exit(128 + uint32(signal))
 	}
 	return nil
