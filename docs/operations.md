@@ -234,6 +234,14 @@ different binary, override the path explicitly, for example in CI:
 `make lint-md MARKDOWNLINT_CLI2=markdownlint-cli2`. `make verify` still runs
 `gofmt`, `go vet`, and the race-enabled unit tests.
 
+Do not run a system-installed `staticcheck` directly. It is not pinned by this
+repository and a host copy can be too old for the toolchain: a v0.7.0 binary
+fails against go1.27.1 with `export data version 4 is greater than maximum
+supported version 2`. `staticcheck` is enabled inside `golangci-lint`, so
+`make lint` is the authoritative static check; if a newer standalone
+`staticcheck` is ever required, pin it the same way as the other tools rather
+than relying on PATH.
+
 ## Cleanup
 
 The daemon leaves containers, networks, images, and the log directory behind.
