@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -212,8 +213,8 @@ func detailFromRecord(record ImageRecord) ImageDetail {
 	}
 	return ImageDetail{
 		ID:          domain.ImageID(id),
-		RepoTags:    append([]string(nil), record.RepoTags...),
-		RepoDigests: append([]string(nil), record.RepoDigests...),
+		RepoTags:    slices.Clone(record.RepoTags),
+		RepoDigests: slices.Clone(record.RepoDigests),
 		Platform:    formatPlatform(record.Platform),
 		Size:        record.Size,
 		Created:     record.CreatedAt,

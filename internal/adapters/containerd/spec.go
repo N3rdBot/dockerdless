@@ -128,7 +128,7 @@ func resolveSpecInputs(cfg Config, image ocispec.Image) ([]string, oci.SpecOpts,
 // buildSpecOpts assembles the OCI spec options from the resolved inputs.
 func buildSpecOpts(cfg Config, image ocispec.Image, args []string, userOpt oci.SpecOpts, mounts []specs.Mount) []oci.SpecOpts {
 	opts := []oci.SpecOpts{
-		oci.WithEnv(append([]string(nil), image.Config.Env...)),
+		oci.WithEnv(slices.Clone(image.Config.Env)),
 		oci.WithEnv(envSlice(cfg.Env)),
 		oci.WithProcessArgs(args...),
 	}
@@ -288,7 +288,7 @@ func translateMount(mount Mount) (specs.Mount, error) {
 
 // mountOptions applies Docker's default bind propagation and access mode.
 func mountOptions(mount Mount, mountType string) []string {
-	options := append([]string(nil), mount.Options...)
+	options := slices.Clone(mount.Options)
 	if mountType == "bind" && !slices.Contains(options, "bind") {
 		options = appendIfMissing(options, "rbind")
 	}

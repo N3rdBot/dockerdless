@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"io"
+	"slices"
 
 	"github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
 	"github.com/N3rdBot/dockerdless/internal/adapters/cni"
@@ -259,8 +260,8 @@ func registryAuth(auth *ports.RegistryAuth) *buildkit.RegistryAuth {
 func imageDetail(detail buildkit.ImageDetail) ports.ImageDetail {
 	return ports.ImageDetail{
 		ID:          detail.ID,
-		RepoTags:    append([]string(nil), detail.RepoTags...),
-		RepoDigests: append([]string(nil), detail.RepoDigests...),
+		RepoTags:    slices.Clone(detail.RepoTags),
+		RepoDigests: slices.Clone(detail.RepoDigests),
 		Platform:    detail.Platform,
 		Size:        detail.Size,
 		Created:     detail.Created,

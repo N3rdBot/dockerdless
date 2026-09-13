@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -169,21 +170,21 @@ func contextError(ctx context.Context) error {
 }
 
 func cloneContainer(container Container) Container {
-	container.Spec.Command = append([]string(nil), container.Spec.Command...)
+	container.Spec.Command = slices.Clone(container.Spec.Command)
 	container.Spec.Env = maps.Clone(container.Spec.Env)
 	container.Labels = maps.Clone(container.Labels)
-	container.Execs = append([]ExecRecord(nil), container.Execs...)
+	container.Execs = slices.Clone(container.Execs)
 	for index := range container.Execs {
-		container.Execs[index].Command = append([]string(nil), container.Execs[index].Command...)
+		container.Execs[index].Command = slices.Clone(container.Execs[index].Command)
 	}
-	container.PortBindings = append([]PortBinding(nil), container.PortBindings...)
-	container.Networks = append([]NetworkAttachment(nil), container.Networks...)
+	container.PortBindings = slices.Clone(container.PortBindings)
+	container.Networks = slices.Clone(container.Networks)
 	for index := range container.Networks {
-		container.Networks[index].Aliases = append([]string(nil), container.Networks[index].Aliases...)
+		container.Networks[index].Aliases = slices.Clone(container.Networks[index].Aliases)
 	}
 	if container.Health != nil {
 		health := *container.Health
-		health.Log = append([]HealthCheckResult(nil), health.Log...)
+		health.Log = slices.Clone(health.Log)
 		container.Health = &health
 	}
 	return container

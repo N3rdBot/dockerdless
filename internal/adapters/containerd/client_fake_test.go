@@ -3,6 +3,7 @@ package containerd
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -43,7 +44,7 @@ func (f *fakeClient) record(format string, args ...any) {
 func (f *fakeClient) callLog() []string {
 	f.callMu.Lock()
 	defer f.callMu.Unlock()
-	return append([]string(nil), f.calls...)
+	return slices.Clone(f.calls)
 }
 
 func (f *fakeClient) countCalls(prefix string) int {
@@ -73,7 +74,7 @@ func (f *fakeClient) container(id string) *fakeContainer {
 func (f *fakeClient) snapshotRemovals() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.removedSnapshots...)
+	return slices.Clone(f.removedSnapshots)
 }
 
 func (f *fakeClient) GetImage(_ context.Context, ref string) (Image, error) {
@@ -436,7 +437,7 @@ func (t *fakeTask) setNextProcess(template fakeProcessTemplate) {
 func (t *fakeTask) signals() []syscall.Signal {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return append([]syscall.Signal(nil), t.kills...)
+	return slices.Clone(t.kills)
 }
 
 func (t *fakeTask) resizeSnapshot() (calls int, width, height uint32) {

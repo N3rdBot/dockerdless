@@ -2,6 +2,7 @@ package buildkit
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -115,7 +116,7 @@ func (f *fakeSolver) Solve(_ context.Context, opts SolveOptions, statusCh chan *
 	f.mu.Lock()
 	f.calls++
 	f.opts = opts
-	statuses := append([]*buildkitclient.SolveStatus(nil), f.statuses...)
+	statuses := slices.Clone(f.statuses)
 	result, err := f.result, f.err
 	f.mu.Unlock()
 

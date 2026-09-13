@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -469,7 +470,7 @@ func connectDirect(network Network, ports []domain.PortBinding) (ConnectResult, 
 // bindings were already adopted by the caller; otherwise the allocator turns
 // host port 0 into a real port before CNI sees the request.
 func (a *Adapter) prepareConnectPorts(ports []domain.PortBinding, reserved []PortAllocation, preallocated bool) ([]domain.PortBinding, []PortAllocation, error) {
-	filled := append([]domain.PortBinding(nil), ports...)
+	filled := slices.Clone(ports)
 	if preallocated {
 		return filled, reserved, nil
 	}

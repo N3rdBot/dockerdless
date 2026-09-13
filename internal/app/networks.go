@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -136,5 +137,5 @@ func upsertAttachment(attachments []domain.NetworkAttachment, attachment domain.
 			return attachments
 		}
 	}
-	return append(append([]domain.NetworkAttachment(nil), attachments...), attachment)
+	return append(slices.Clone(attachments), attachment)
 }

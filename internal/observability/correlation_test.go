@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"io"
+	"slices"
 	"sync"
 	"testing"
 
@@ -36,7 +37,7 @@ func (e *recordingLogExporter) ForceFlush(context.Context) error { return nil }
 func (e *recordingLogExporter) snapshot() []sdklog.Record {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]sdklog.Record(nil), e.records...)
+	return slices.Clone(e.records)
 }
 
 // TestLogRecordsCarryActiveSpanIdentity is the failing-first proof for log/trace

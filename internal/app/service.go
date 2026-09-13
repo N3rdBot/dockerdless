@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -192,7 +193,7 @@ func (s *Service) requestContext(ctx context.Context) (context.Context, context.
 }
 
 func (s *Service) cloneBindings(bindings []domain.PortBinding) []domain.PortBinding {
-	return append([]domain.PortBinding(nil), bindings...)
+	return slices.Clone(bindings)
 }
 
 func cloneLabels(labels map[string]string) map[string]string {

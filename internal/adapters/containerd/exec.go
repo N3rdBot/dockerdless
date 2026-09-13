@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"time"
 
@@ -271,7 +272,7 @@ func newExecRecord(containerID domain.ContainerID, result ExecResult, cfg ExecCo
 		ContainerID: containerID,
 		Running:     running,
 		ExitCode:    cloneInt(result.ExitCode),
-		Command:     append([]string(nil), cfg.Command...),
+		Command:     slices.Clone(cfg.Command),
 		TTY:         cfg.Terminal,
 		StartedAt:   result.StartedAt,
 		FinishedAt:  result.FinishedAt,
@@ -291,7 +292,7 @@ func buildExecProcessSpec(ctx context.Context, base *specs.Process, cfg ExecConf
 		return nil, fmt.Errorf("%w: container spec has no process", ErrServerError)
 	}
 	process := *base
-	process.Args = append([]string(nil), cfg.Command...)
+	process.Args = slices.Clone(cfg.Command)
 	process.Terminal = cfg.Terminal
 	opts := []oci.SpecOpts{}
 	if cfg.Terminal {
@@ -328,7 +329,7 @@ func cloneInt(value *int) *int {
 
 // cloneExecRecord copies the mutable slices of an exec record.
 func cloneExecRecord(record domain.ExecRecord) domain.ExecRecord {
-	record.Command = append([]string(nil), record.Command...)
+	record.Command = slices.Clone(record.Command)
 	record.ExitCode = cloneInt(record.ExitCode)
 	return record
 }

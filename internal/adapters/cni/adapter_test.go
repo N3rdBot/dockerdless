@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/containernetworking/cni/libcni"
@@ -41,7 +42,7 @@ func (f *fakeCNI) AddNetworkList(_ context.Context, list *libcni.NetworkConfigLi
 	if f.addErr != nil {
 		return nil, f.addErr
 	}
-	f.cachedConfig = append([]byte(nil), list.Bytes...)
+	f.cachedConfig = slices.Clone(list.Bytes)
 	cached := *rt
 	f.cachedRuntime = &cached
 	if f.addResult != nil {

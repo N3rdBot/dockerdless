@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/ports"
@@ -48,7 +49,7 @@ func (s *Service) ExecCreate(ctx context.Context, ref string, request ports.Exec
 	s.execs[id] = &pendingExec{
 		id:         id,
 		container:  container.ID,
-		command:    append([]string(nil), request.Command...),
+		command:    slices.Clone(request.Command),
 		env:        request.Env,
 		workingDir: request.WorkingDir,
 		user:       request.User,
@@ -59,7 +60,7 @@ func (s *Service) ExecCreate(ctx context.Context, ref string, request ports.Exec
 		record: domain.ExecRecord{
 			ID:          id,
 			ContainerID: container.ID,
-			Command:     append([]string(nil), request.Command...),
+			Command:     slices.Clone(request.Command),
 			TTY:         request.TTY,
 			OpenStdin:   request.AttachStdin,
 			OpenStdout:  request.AttachStdout,

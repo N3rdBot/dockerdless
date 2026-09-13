@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -123,9 +124,9 @@ func imageConfigFromSpec(spec ocispec.Image) ports.ImageConfig {
 	return ports.ImageConfig{
 		User:         config.User,
 		ExposedPorts: sortedSetKeys(config.ExposedPorts),
-		Env:          append([]string(nil), config.Env...),
-		Entrypoint:   append([]string(nil), config.Entrypoint...),
-		Cmd:          append([]string(nil), config.Cmd...),
+		Env:          slices.Clone(config.Env),
+		Entrypoint:   slices.Clone(config.Entrypoint),
+		Cmd:          slices.Clone(config.Cmd),
 		Volumes:      sortedSetKeys(config.Volumes),
 		WorkingDir:   config.WorkingDir,
 		Labels:       maps.Clone(config.Labels),

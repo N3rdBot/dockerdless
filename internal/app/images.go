@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"go.uber.org/zap"
@@ -112,7 +113,7 @@ func containerUsesImage(container domain.Container, detail ports.ImageDetail) bo
 	if strings.TrimSpace(reference) == "" {
 		return false
 	}
-	for _, candidate := range append(append([]string(nil), detail.RepoTags...), detail.RepoDigests...) {
+	for _, candidate := range slices.Concat(detail.RepoTags, detail.RepoDigests) {
 		if sameImageReference(reference, candidate) {
 			return true
 		}
