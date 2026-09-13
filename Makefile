@@ -1,7 +1,7 @@
 GO ?= go
 BINARY ?= bin/dockerdless
 
-.PHONY: build test vet lint run
+.PHONY: build test vet lint run integration
 
 build:
 	mkdir -p $(dir $(BINARY))
@@ -18,3 +18,6 @@ lint:
 
 run:
 	$(GO) run ./cmd/dockerdless
+
+integration:
+	$(GO) test -tags=integration -count=1 -v ./integration/...
