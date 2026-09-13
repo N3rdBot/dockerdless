@@ -1,0 +1,8 @@
+{
+  "name": "dockerdless-tools",
+  "private": true,
+  "description": "Pinned developer tooling for dockerdless (Markdown lint).",
+  "devDependencies": {
+    "markdownlint-cli2": "0.22.1"
+  }
+}
