@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -69,63 +68,6 @@ func (h *handlers) containerCreate(w http.ResponseWriter, r *http.Request) {
 		ID:       string(result.ID),
 		Warnings: result.Warnings,
 	})
-}
-
-func validateContainerCreate(payload *container.CreateRequest) *DockerError {
-	if payload == nil || payload.HostConfig == nil {
-		return nil
-	}
-	hostConfig := payload.HostConfig
-	switch {
-	case hostConfig.Privileged:
-		return NewNotImplemented("HostConfig.Privileged is not supported")
-	case len(hostConfig.CapAdd) > 0:
-		return NewNotImplemented("HostConfig.CapAdd is not supported")
-	case len(hostConfig.CapDrop) > 0:
-		return NewNotImplemented("HostConfig.CapDrop is not supported")
-	case len(hostConfig.Devices) > 0:
-		return NewNotImplemented("HostConfig.Devices is not supported")
-	case hostConfig.ReadonlyRootfs:
-		return NewNotImplemented("HostConfig.ReadonlyRootfs is not supported")
-	case !reflect.DeepEqual(hostConfig.Resources, container.Resources{}):
-		return NewNotImplemented("HostConfig.Resources is not supported")
-	case hostConfig.RestartPolicy.Name != "" || hostConfig.RestartPolicy.MaximumRetryCount != 0:
-		return NewNotImplemented("HostConfig.RestartPolicy is not supported")
-	case len(hostConfig.SecurityOpt) > 0:
-		return NewNotImplemented("HostConfig.SecurityOpt is not supported")
-	case hostConfig.PidMode != "":
-		return NewNotImplemented("HostConfig.PidMode is not supported")
-	case hostConfig.IpcMode != "":
-		return NewNotImplemented("HostConfig.IpcMode is not supported")
-	case hostConfig.UTSMode != "":
-		return NewNotImplemented("HostConfig.UTSMode is not supported")
-	case hostConfig.UsernsMode != "":
-		return NewNotImplemented("HostConfig.UsernsMode is not supported")
-	case hostConfig.CgroupnsMode != "":
-		return NewNotImplemented("HostConfig.CgroupnsMode is not supported")
-	case len(hostConfig.Sysctls) > 0:
-		return NewNotImplemented("HostConfig.Sysctls is not supported")
-	case len(hostConfig.MaskedPaths) > 0:
-		return NewNotImplemented("HostConfig.MaskedPaths is not supported")
-	case len(hostConfig.ReadonlyPaths) > 0:
-		return NewNotImplemented("HostConfig.ReadonlyPaths is not supported")
-	case hostConfig.Runtime != "" && hostConfig.Runtime != defaultContainerRuntime:
-		return NewNotImplemented("HostConfig.Runtime is not supported")
-	case len(hostConfig.VolumesFrom) > 0:
-		return NewNotImplemented("HostConfig.VolumesFrom is not supported")
-	case hostConfig.OomScoreAdj != 0:
-		return NewNotImplemented("HostConfig.OomScoreAdj is not supported")
-	}
-	for _, requested := range hostConfig.Mounts {
-		mountType := requested.Type
-		if mountType == "" {
-			mountType = mount.TypeBind
-		}
-		if mountType != mount.TypeBind && mountType != mount.TypeTmpfs {
-			return NewNotImplemented(fmt.Sprintf("HostConfig.Mounts type %q is not supported", mountType))
-		}
-	}
-	return nil
 }
 
 func (h *handlers) containerList(w http.ResponseWriter, r *http.Request) {

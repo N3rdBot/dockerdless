@@ -99,6 +99,13 @@ func TestHandlers_containerCreateRejectsUnsupportedFields(t *testing.T) {
 		{name: "readonly rootfs", field: `"ReadonlyRootfs":true`, message: "HostConfig.ReadonlyRootfs is not supported"},
 		{name: "resources", field: `"Memory":1`, message: "HostConfig.Resources is not supported"},
 		{name: "restart policy", field: `"RestartPolicy":{"Name":"always"}`, message: "HostConfig.RestartPolicy is not supported"},
+		{name: "container id file", field: `"ContainerIDFile":"/tmp/cid"`, message: "HostConfig.ContainerIDFile is not supported"},
+		{name: "volume driver", field: `"VolumeDriver":"local"`, message: "HostConfig.VolumeDriver is not supported"},
+		{name: "annotations", field: `"Annotations":{"k":"v"}`, message: "HostConfig.Annotations is not supported"},
+		{name: "cgroup", field: `"Cgroup":"host"`, message: "HostConfig.Cgroup is not supported"},
+		{name: "links", field: `"Links":["db:database"]`, message: "HostConfig.Links is not supported"},
+		{name: "storage opt", field: `"StorageOpt":{"size":"1G"}`, message: "HostConfig.StorageOpt is not supported"},
+		{name: "umask", field: `"Umask":22`, message: "HostConfig.Umask is not supported"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,6 +125,73 @@ func TestHandlers_containerCreateRejectsUnsupportedFields(t *testing.T) {
 			want := `{"message":"` + tt.message + `"}`
 			if got := strings.TrimSpace(recorder.Body.String()); got != want {
 				t.Fatalf("unexpected Docker error body %s", got)
+			}
+		})
+	}
+}
+
+func TestHandlers_containerCreateRejectsUnsupportedConfigFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		field   string
+		message string
+	}{
+		{name: "domainname", field: `"Domainname":"example.com"`, message: "Config.Domainname is not supported"},
+		{name: "exposed ports", field: `"ExposedPorts":{"8080/tcp":{}}`, message: "Config.ExposedPorts is not supported"},
+		{name: "healthcheck", field: `"Healthcheck":{"Test":["CMD","true"]}`, message: "Config.Healthcheck is not supported"},
+		{name: "volumes", field: `"Volumes":{"/data":{}}`, message: "Config.Volumes is not supported"},
+		{name: "network disabled", field: `"NetworkDisabled":true`, message: "Config.NetworkDisabled is not supported"},
+		{name: "onbuild", field: `"OnBuild":["RUN true"]`, message: "Config.OnBuild is not supported"},
+		{name: "stop signal", field: `"StopSignal":"SIGKILL"`, message: "Config.StopSignal is not supported"},
+		{name: "stop timeout", field: `"StopTimeout":5`, message: "Config.StopTimeout is not supported"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &fakeService{create: func(context.Context, ports.ContainerCreateRequest) (ports.ContainerCreateResult, error) {
+				t.Fatal("container service must not be called for unsupported create field")
+				return ports.ContainerCreateResult{}, nil
+			}}
+			handler := NewRouterWithDependencies(Dependencies{Service: service})
+			recorder := httptest.NewRecorder()
+			body := `{"Image":"alpine:latest",` + tt.field + `}`
+
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+
+			if recorder.Code != http.StatusNotImplemented {
+				t.Fatalf("expected 501, got %d body=%s", recorder.Code, recorder.Body.String())
+			}
+			want := `{"message":"` + tt.message + `"}`
+			if got := strings.TrimSpace(recorder.Body.String()); got != want {
+				t.Fatalf("unexpected Docker error body %s", got)
+			}
+		})
+	}
+}
+
+func TestHandlers_containerCreateRejectsInvalidMountSource(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+	}{
+		{name: "structured bind empty source", field: `"Mounts":[{"Type":"bind","Source":"","Target":"/data"}]`},
+		{name: "structured bind relative source", field: `"Mounts":[{"Type":"bind","Source":"relative","Target":"/data"}]`},
+		{name: "structured tmpfs with source", field: `"Mounts":[{"Type":"tmpfs","Source":"/tmp","Target":"/data"}]`},
+		{name: "binds empty source", field: `"Binds":[":/data"]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &fakeService{create: func(context.Context, ports.ContainerCreateRequest) (ports.ContainerCreateResult, error) {
+				t.Fatal("container service must not be called for an invalid mount source")
+				return ports.ContainerCreateResult{}, nil
+			}}
+			handler := NewRouterWithDependencies(Dependencies{Service: service})
+			recorder := httptest.NewRecorder()
+			body := `{"Image":"alpine:latest","HostConfig":{` + tt.field + `}}`
+
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body)))
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%s", recorder.Code, recorder.Body.String())
 			}
 		})
 	}
