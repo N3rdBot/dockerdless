@@ -100,6 +100,13 @@ func (s *Service) ContainerCreate(ctx context.Context, request ports.ContainerCr
 		return ports.ContainerCreateResult{}, serverError("encode container command: %v", err)
 	}
 	labels := cloneLabels(request.Labels)
+	if len(request.Mounts) > 0 {
+		encodedMounts, err := json.Marshal(request.Mounts)
+		if err != nil {
+			return ports.ContainerCreateResult{}, serverError("encode container mounts: %v", err)
+		}
+		labels[ports.LabelMounts] = string(encodedMounts)
+	}
 	if request.TTY {
 		labels[ports.LabelTTY] = "true"
 	}

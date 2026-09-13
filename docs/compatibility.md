@@ -28,7 +28,7 @@ Environment of the recorded verification run:
 | `GET /images/json` | `handlers.imageList` → `app.Service.ImageList` | `buildkit.Adapter.List` → containerd image service | no direct library call; asserted through the Moby client | verified live |
 | `POST /build` | `handlers.build` → `app.Service.ImageBuild` | `buildkit.Adapter.Build` → BuildKit `dockerfile.v0` solve + image export | `DockerProvider.BuildImage` via `FromDockerfile` | verified live |
 | `DELETE /images/{name}` | `handlers.imageRemove` → `app.Service.ImageRemove` | `buildkit.Adapter.Remove` → containerd image service delete | `DockerContainer.Terminate` removes built images | verified live |
-| `POST /containers/create` | `handlers.containerCreate` → `app.Service.ContainerCreate` | containerd `CreateContainer` (snapshot + OCI spec), CNI network resolve, host-port allocator | `DockerProvider.CreateContainer` | verified live |
+| `POST /containers/create` | `handlers.containerCreate` → `app.Service.ContainerCreate` | containerd `CreateContainer` (snapshot + OCI spec), bind/tmpfs mount translation, CNI network resolve, host-port allocator | `DockerProvider.CreateContainer` | verified live |
 | `POST /containers/{id}/start` | `handlers.containerStart` → `app.Service.ContainerStart` | containerd task start + CNI ADD (`bridge`/`host-local`/`portmap`/`firewall`) | `DockerContainer.Start` | verified live |
 | `POST /containers/{id}/stop` | `handlers.containerStop` → `app.Service.ContainerStop` | containerd task SIGTERM → SIGKILL escalation | `DockerContainer.Stop` | verified live |
 | `DELETE /containers/{id}` | `handlers.containerRemove` → `app.Service.ContainerRemove` | containerd task/container/snapshot delete + CNI DEL | `DockerContainer.Terminate` | verified live |
@@ -83,12 +83,24 @@ non-default behavior:
 | `HostConfig` resource limits non-zero | `501 HostConfig.Resources is not supported` | CPU, memory, cgroup, device, and ulimit settings are not applied. |
 | `HostConfig.RestartPolicy` non-default | `501 HostConfig.RestartPolicy is not supported` | The MVP has no restart supervisor. |
 | `HostConfig.SecurityOpt` non-empty | `501 HostConfig.SecurityOpt is not supported` | Security labels and profiles are not applied. |
+| `HostConfig.PidMode` non-empty | `501 HostConfig.PidMode is not supported` | PID namespace selection is not applied. |
+| `HostConfig.IpcMode` non-empty | `501 HostConfig.IpcMode is not supported` | IPC namespace selection is not applied. |
+| `HostConfig.UTSMode` non-empty | `501 HostConfig.UTSMode is not supported` | UTS namespace selection is not applied. |
+| `HostConfig.UsernsMode` non-empty | `501 HostConfig.UsernsMode is not supported` | User namespace selection is not applied. |
+| `HostConfig.CgroupnsMode` non-empty | `501 HostConfig.CgroupnsMode is not supported` | Cgroup namespace selection is not applied. |
+| `HostConfig.Sysctls` non-empty | `501 HostConfig.Sysctls is not supported` | Namespace sysctls are not applied. |
+| `HostConfig.MaskedPaths` non-empty | `501 HostConfig.MaskedPaths is not supported` | Masked paths are not applied. |
+| `HostConfig.ReadonlyPaths` non-empty | `501 HostConfig.ReadonlyPaths is not supported` | Read-only paths are not applied. |
+| `HostConfig.Runtime` other than `io.containerd.runc.v2` | `501 HostConfig.Runtime is not supported` | Alternate OCI runtimes are not selectable. |
+| `HostConfig.VolumesFrom` non-empty | `501 HostConfig.VolumesFrom is not supported` | Mount inheritance is not applied. |
+| `HostConfig.OomScoreAdj` non-zero | `501 HostConfig.OomScoreAdj is not supported` | OOM score adjustment is not applied. |
+| `HostConfig.Mounts` type `volume`, `npipe`, `cluster`, or `image` | `501 HostConfig.Mounts type "<type>" is not supported` | Only bind and tmpfs mounts have an OCI translation. |
 
 ### Ignored create fields
 
 The following fields are accepted and harmlessly ignored because they do not
-change the container semantics implemented by this MVP. They are listed here
-so their omission is explicit rather than silent:
+change the container semantics implemented by this MVP. This is the current
+documented list; fields not listed here may be rejected or handled elsewhere.
 
 | Docker field | Compatibility behavior |
 | --- | --- |
@@ -103,6 +115,9 @@ so their omission is explicit rather than silent:
 | `HostConfig.GroupAdd` | Supplementary groups are not added. |
 | `HostConfig.ShmSize` | The default runtime shared-memory configuration is retained. |
 | `NetworkingConfig.EndpointsConfig` after the first requested network | Multi-network attachment is unsupported; one network is selected. |
+
+`HostConfig.Mounts` with type `bind` or `tmpfs` is translated into OCI mounts
+and reported by inspect; it is supported rather than ignored.
 
 `/version` and `/info` report `0.0.0-dev` as the intentional development
 version string. `/info` reports `LoggingDriver: "cri"` because the daemon

@@ -19,10 +19,13 @@ import (
 	"github.com/N3rdBot/dockerdless/internal/ports"
 	"github.com/N3rdBot/dockerdless/internal/streams"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/storage"
 	"go.uber.org/zap"
 )
+
+const defaultContainerRuntime = "io.containerd.runc.v2"
 
 func (h *handlers) containerCreate(w http.ResponseWriter, r *http.Request) {
 	var payload container.CreateRequest
@@ -90,6 +93,37 @@ func validateContainerCreate(payload *container.CreateRequest) *DockerError {
 		return NewNotImplemented("HostConfig.RestartPolicy is not supported")
 	case len(hostConfig.SecurityOpt) > 0:
 		return NewNotImplemented("HostConfig.SecurityOpt is not supported")
+	case hostConfig.PidMode != "":
+		return NewNotImplemented("HostConfig.PidMode is not supported")
+	case hostConfig.IpcMode != "":
+		return NewNotImplemented("HostConfig.IpcMode is not supported")
+	case hostConfig.UTSMode != "":
+		return NewNotImplemented("HostConfig.UTSMode is not supported")
+	case hostConfig.UsernsMode != "":
+		return NewNotImplemented("HostConfig.UsernsMode is not supported")
+	case hostConfig.CgroupnsMode != "":
+		return NewNotImplemented("HostConfig.CgroupnsMode is not supported")
+	case len(hostConfig.Sysctls) > 0:
+		return NewNotImplemented("HostConfig.Sysctls is not supported")
+	case len(hostConfig.MaskedPaths) > 0:
+		return NewNotImplemented("HostConfig.MaskedPaths is not supported")
+	case len(hostConfig.ReadonlyPaths) > 0:
+		return NewNotImplemented("HostConfig.ReadonlyPaths is not supported")
+	case hostConfig.Runtime != "" && hostConfig.Runtime != defaultContainerRuntime:
+		return NewNotImplemented("HostConfig.Runtime is not supported")
+	case len(hostConfig.VolumesFrom) > 0:
+		return NewNotImplemented("HostConfig.VolumesFrom is not supported")
+	case hostConfig.OomScoreAdj != 0:
+		return NewNotImplemented("HostConfig.OomScoreAdj is not supported")
+	}
+	for _, requested := range hostConfig.Mounts {
+		mountType := requested.Type
+		if mountType == "" {
+			mountType = mount.TypeBind
+		}
+		if mountType != mount.TypeBind && mountType != mount.TypeTmpfs {
+			return NewNotImplemented(fmt.Sprintf("HostConfig.Mounts type %q is not supported", mountType))
+		}
 	}
 	return nil
 }
@@ -248,10 +282,10 @@ func requestedPortBindings(hostConfig *container.HostConfig) ([]domain.PortBindi
 }
 
 func requestedMounts(hostConfig *container.HostConfig) []ports.Mount {
-	if hostConfig == nil || len(hostConfig.Binds) == 0 {
+	if hostConfig == nil || (len(hostConfig.Binds) == 0 && len(hostConfig.Mounts) == 0) {
 		return nil
 	}
-	mounts := make([]ports.Mount, 0, len(hostConfig.Binds))
+	mounts := make([]ports.Mount, 0, len(hostConfig.Binds)+len(hostConfig.Mounts))
 	for _, bind := range hostConfig.Binds {
 		parts := strings.Split(bind, ":")
 		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
@@ -270,6 +304,33 @@ func requestedMounts(hostConfig *container.HostConfig) []ports.Mount {
 			}
 		}
 		mounts = append(mounts, mount)
+	}
+	for _, requested := range hostConfig.Mounts {
+		mountType := string(requested.Type)
+		if mountType == "" {
+			mountType = string(mount.TypeBind)
+		}
+		translated := ports.Mount{Type: mountType, Source: requested.Source, Destination: requested.Target, ReadOnly: requested.ReadOnly}
+		if requested.BindOptions != nil && requested.BindOptions.Propagation != "" {
+			translated.Options = append(translated.Options, string(requested.BindOptions.Propagation))
+		}
+		if requested.TmpfsOptions != nil {
+			if requested.TmpfsOptions.SizeBytes > 0 {
+				translated.Options = append(translated.Options, fmt.Sprintf("size=%d", requested.TmpfsOptions.SizeBytes))
+			}
+			if requested.TmpfsOptions.Mode != 0 {
+				translated.Options = append(translated.Options, fmt.Sprintf("mode=%o", requested.TmpfsOptions.Mode))
+			}
+			for _, option := range requested.TmpfsOptions.Options {
+				switch len(option) {
+				case 1:
+					translated.Options = append(translated.Options, option[0])
+				case 2:
+					translated.Options = append(translated.Options, option[0]+"="+option[1])
+				}
+			}
+		}
+		mounts = append(mounts, translated)
 	}
 	return mounts
 }
@@ -317,12 +378,37 @@ func containerInspectResponse(item domain.Container) container.InspectResponse {
 			Env:        envSlice(item.Spec.Env),
 			WorkingDir: "",
 		},
-		Mounts: []container.MountPoint{},
+		Mounts: inspectMounts(item.Labels[ports.LabelMounts]),
 		NetworkSettings: &container.NetworkSettings{
 			Ports:    portMap,
 			Networks: endpointSettingsMap(item.Networks),
 		},
 	}
+}
+
+func inspectMounts(encoded string) []container.MountPoint {
+	if encoded == "" {
+		return []container.MountPoint{}
+	}
+	var mounts []ports.Mount
+	if err := json.Unmarshal([]byte(encoded), &mounts); err != nil {
+		return []container.MountPoint{}
+	}
+	result := make([]container.MountPoint, 0, len(mounts))
+	for _, requested := range mounts {
+		mountType := requested.Type
+		if mountType == "" {
+			mountType = string(mount.TypeBind)
+		}
+		result = append(result, container.MountPoint{
+			Type:        mount.Type(mountType),
+			Source:      requested.Source,
+			Destination: requested.Destination,
+			Mode:        strings.Join(requested.Options, ","),
+			RW:          !requested.ReadOnly,
+		})
+	}
+	return result
 }
 
 func containerSummaryResponse(item domain.Container) container.Summary {

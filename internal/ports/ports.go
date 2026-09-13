@@ -63,6 +63,9 @@ var (
 // HTTP layer reads it for log framing and filters it from inspect output.
 const LabelTTY = "io.dockerdless.tty"
 
+// LabelMounts stores the Docker mount configuration for inspect responses.
+const LabelMounts = "io.dockerdless.mounts"
+
 // RegistryAuth carries Docker registry credentials in a transport-neutral
 // shape. It is converted to the BuildKit adapter's redacting type at the
 // application boundary and is never logged.
