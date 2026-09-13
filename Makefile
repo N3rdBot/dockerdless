@@ -3,7 +3,7 @@ BINARY ?= bin/dockerdless
 BENCH_PKGS ?= ./internal/streams/... ./internal/adapters/cni/...
 BENCHTIME ?= 200ms
 
-.PHONY: build test vet fmt lint verify integration bench release run clean
+.PHONY: build test vet fmt lint verify integration hooks bench release run clean
 
 build:
 	mkdir -p $(dir $(BINARY))
@@ -46,3 +46,8 @@ run:
 
 clean:
 	rm -rf bin
+
+# hooks installs the repository's git hooks (commit-msg convention + DCO check).
+hooks:
+	git config core.hooksPath .githooks
+	@echo "hooks installed: core.hooksPath -> .githooks"

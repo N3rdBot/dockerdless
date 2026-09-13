@@ -1,0 +1,156 @@
+#!/bin/sh
+#
+# dockerdless commit-msg hook
+#
+# Enforces docs/process/commit-conventions.md:
+#
+#   <type>[(<scope>)][!]: <description>
+#
+#   - <type>        one of: feat fix docs style refactor perf test build ci chore revert
+#   - (<scope>)     optional; lowercase kebab-case when present (^[a-z0-9]+(-[a-z0-9]+)*$)
+#   - !             optional; requires a 'BREAKING CHANGE: ' footer in the message
+#   - <description> non-empty and must not end with a period '.'
+#   - header line   at most 100 characters (72 is only a recommendation)
+#   - message       must carry a 'Signed-off-by: ' trailer (DCO);
+#                   use `git commit -s` (or `git commit --signoff`) to add it
+#
+# Install (from the repository root):
+#
+#   make hooks
+#
+# which runs: git config core.hooksPath .githooks
+#
+# Bypass (use sparingly):
+#
+#   git commit --no-verify
+#
+# Merge, Revert "...", fixup! and squash! messages are ignored automatically,
+# as are messages that are empty once comment lines are stripped.
+#
+
+msg_file=$1
+
+if [ -z "$msg_file" ]; then
+	echo "commit-msg: missing argument: expected the commit message file path" >&2
+	exit 1
+fi
+
+if [ ! -f "$msg_file" ]; then
+	echo "commit-msg: commit message file not found: $msg_file" >&2
+	exit 1
+fi
+
+# Strip comment lines; keep the rest for all content checks.
+stripped=$(grep -v '^#' "$msg_file" 2>/dev/null || true)
+
+# First non-blank line of the stripped message, if any.
+first_line=$(printf '%s\n' "$stripped" | sed -n '/[^[:space:]]/{p;q;}')
+
+# A message that is empty (after comments) is not our business.
+if [ -z "$first_line" ]; then
+	exit 0
+fi
+
+# Ignore generated/special commits.
+case $first_line in
+	"Merge "* | "Revert \""* | "fixup!"* | "squash!"*)
+		exit 0
+		;;
+esac
+
+fail() {
+	echo "commit-msg: $1" >&2
+	echo "commit-msg: convention: <type>[(<scope>)][!]: <description>" >&2
+	echo "commit-msg: allowed types: feat fix docs style refactor perf test build ci chore revert" >&2
+	echo "commit-msg: fix the message, or bypass once with: git commit --no-verify" >&2
+	exit 1
+}
+
+# Trailing whitespace (e.g. CR) is not part of the header content.
+first_line=$(printf '%s' "$first_line" | sed -e 's/[[:space:]]*$//')
+
+# Rule: hard header length limit.
+header_len=$(printf '%s' "$first_line" | awk '{ print length }')
+if [ "$header_len" -gt 100 ]; then
+	fail "header is $header_len characters long; the hard limit is 100 (72 recommended)"
+fi
+
+# Rule: header grammar needs a colon.
+case $first_line in
+	*:*) ;;
+	*) fail "header does not match '<type>[(<scope>)][!]: <description>' (missing ':')" ;;
+esac
+
+prefix=${first_line%%:*}
+description=${first_line#*:}
+
+# Rule: type with optional scope and optional '!'.
+subject=$prefix
+breaking=0
+case $subject in
+	*!)
+		breaking=1
+		subject=${subject%!}
+		;;
+esac
+
+type=$subject
+case $subject in
+	*'('*')')
+		type=${subject%%(*}
+		scope=${subject#*\(}
+		scope=${scope%\)}
+		case $scope in
+			'') fail "scope is empty; '<type>(<scope>)' requires a non-empty scope" ;;
+			*'('* | *')'*) fail "malformed scope '$scope'; expected '<type>[(<scope>)][!]: <description>'" ;;
+		esac
+		if ! printf '%s' "$scope" | grep -qE '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+			fail "scope '$scope' is not lowercase kebab-case (expected '^[a-z0-9]+(-[a-z0-9]+)*$')"
+		fi
+		;;
+	*'('* | *')'*)
+		fail "malformed scope in header; expected '<type>[(<scope>)][!]: <description>'"
+		;;
+esac
+
+case $type in
+	feat | fix | docs | style | refactor | perf | test | build | ci | chore | revert) ;;
+	*)
+		if [ -z "$type" ]; then
+			fail "missing type; expected '<type>[(<scope>)][!]: <description>'"
+		fi
+		fail "unknown type '$type'; allowed: feat fix docs style refactor perf test build ci chore revert"
+		;;
+esac
+
+# Rule: ': ' followed by a description.
+case $description in
+	' '*) ;;
+	*) fail "expected ': ' followed by a description after the type/scope" ;;
+esac
+
+description=${description# }
+description=$(printf '%s' "$description" | sed -e 's/[[:space:]]*$//')
+
+if [ -z "$description" ]; then
+	fail "description is empty; expected '<type>[(<scope>)][!]: <description>'"
+fi
+
+# Rule: no trailing period.
+case $description in
+	*.) fail "description must not end with a period: '$description'" ;;
+esac
+
+# Rule: a '!' header requires a 'BREAKING CHANGE: ' footer.
+if [ "$breaking" -eq 1 ]; then
+	if ! printf '%s\n' "$stripped" | sed -n 's/^BREAKING CHANGE: //p' | grep -q '[^[:space:]]'; then
+		fail "header carries '!' but the message has no 'BREAKING CHANGE: ' footer explaining the break"
+	fi
+fi
+
+# Rule: DCO trailer (uncommented message content only).
+if ! printf '%s\n' "$stripped" | sed -n 's/^Signed-off-by: //p' | grep -q '[^[:space:]]'; then
+	fail "missing 'Signed-off-by: ' trailer line (DCO); retry with: git commit -s"
+fi
+
+exit 0
