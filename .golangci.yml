@@ -46,6 +46,7 @@ linters:
     - fatcontext
     - gocheckcompilerdirectives
     - gocritic
+    - gocyclo
     - gosec
     - govet
     - ineffassign
@@ -154,6 +155,11 @@ linters:
           deny:
             - pkg: "github.com/N3rdBot/dockerdless/internal/adapters/"
               desc: "api must depend on ports, not concrete adapters"
+    gocyclo:
+      # golangci-lint's gocyclo reports functions whose complexity is STRICTLY
+      # greater than this value, so 14 is the threshold that flags every
+      # function with cyclomatic complexity >= 15.
+      min-complexity: 14
     govet:
       enable-all: true
       disable:
