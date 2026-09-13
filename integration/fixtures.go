@@ -90,11 +90,12 @@ func looksLikeConnectivityFailure(err error) bool {
 	return false
 }
 
-// fixtureContextTar assembles the POST /build context: the committed fixture
-// files plus the statically linked dls-helper binary built from
-// integration/fixtures/helper. The scratch-based Dockerfile therefore never
-// needs registry access.
-func fixtureContextTar(t *testing.T) (io.Reader, string) {
+// fixtureContextDir stages the committed fixture files plus the statically
+// linked dls-helper binary into a temp directory and returns the context
+// directory. The scratch-based Dockerfile therefore never needs registry
+// access, whether it is built through POST /build or through testcontainers'
+// FromDockerfile.
+func fixtureContextDir(t *testing.T) string {
 	t.Helper()
 	root, err := moduleRoot()
 	if err != nil {
@@ -120,6 +121,19 @@ func fixtureContextTar(t *testing.T) (io.Reader, string) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build dls-helper: %v\n%s", err, output)
 	}
+	return contextDir
+}
+
+// fixtureContextTar assembles the POST /build context from the staged fixture
+// directory and returns the tar stream plus the fixtures source dir.
+func fixtureContextTar(t *testing.T) (io.Reader, string) {
+	t.Helper()
+	root, err := moduleRoot()
+	if err != nil {
+		t.Fatalf("locate module root: %v", err)
+	}
+	fixturesDir := filepath.Join(root, "integration", "fixtures")
+	contextDir := fixtureContextDir(t)
 
 	var buffer bytes.Buffer
 	writer := tar.NewWriter(&buffer)

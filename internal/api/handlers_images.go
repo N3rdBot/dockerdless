@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/N3rdBot/dockerdless/internal/ports"
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/api/types/storage"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const maxBuildContextBytes int64 = 1 << 30
@@ -22,6 +25,26 @@ func (h *handlers) imageInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, imageInspectResponse(detail))
+}
+
+func (h *handlers) imageRemove(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(pathParameter(r, "/images/", ""), "/")
+	force := boolQuery(r, "force", false)
+	result, err := h.service.ImageRemove(r.Context(), name, force)
+	if err != nil {
+		WriteServiceError(w, err)
+		return
+	}
+	items := make([]image.DeleteResponse, 0, 1)
+	switch {
+	case result.Untagged != "":
+		items = append(items, image.DeleteResponse{Untagged: result.Untagged})
+	case result.Deleted != "":
+		items = append(items, image.DeleteResponse{Deleted: result.Deleted})
+	default:
+		items = append(items, image.DeleteResponse{Deleted: string(result.ID)})
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (h *handlers) imageList(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +177,41 @@ func imageInspectResponse(detail ports.ImageDetail) image.InspectResponse {
 		Size:         detail.Size,
 		GraphDriver:  &storage.DriverData{Name: "overlayfs"},
 		RootFS:       image.RootFS{Type: "layers"},
+		Config:       imageConfigResponse(detail.Config),
 	}
+}
+
+// imageConfigResponse renders the Docker inspect Config envelope. It is always
+// non-nil because Docker clients (testcontainers-go among them) dereference
+// Config.ExposedPorts without a nil check on every container create.
+func imageConfigResponse(config *ports.ImageConfig) *dockerspec.DockerOCIImageConfig {
+	response := &dockerspec.DockerOCIImageConfig{
+		ImageConfig: ocispec.ImageConfig{
+			ExposedPorts: map[string]struct{}{},
+			Volumes:      map[string]struct{}{},
+		},
+	}
+	if config == nil {
+		return response
+	}
+	for _, raw := range config.ExposedPorts {
+		if port, err := network.ParsePort(raw); err == nil {
+			response.ExposedPorts[port.String()] = struct{}{}
+		}
+	}
+	for _, volume := range config.Volumes {
+		if strings.TrimSpace(volume) != "" {
+			response.Volumes[volume] = struct{}{}
+		}
+	}
+	response.User = config.User
+	response.Env = append([]string(nil), config.Env...)
+	response.Entrypoint = append([]string(nil), config.Entrypoint...)
+	response.Cmd = append([]string(nil), config.Cmd...)
+	response.WorkingDir = config.WorkingDir
+	response.Labels = config.Labels
+	response.StopSignal = config.StopSignal
+	return response
 }
 
 func splitPlatform(platform string) (architecture, variant, osName string) {

@@ -29,6 +29,7 @@ func MVPRouteMatrix() RouteMatrix {
 		{Method: http.MethodGet, Path: "/images/{name}/json"},
 		{Method: http.MethodPost, Path: "/images/create"},
 		{Method: http.MethodGet, Path: "/images/json"},
+		{Method: http.MethodDelete, Path: "/images/{name}"},
 		{Method: http.MethodPost, Path: "/build"},
 
 		{Method: http.MethodPost, Path: "/containers/create"},
@@ -64,6 +65,7 @@ func serviceRouteMatrix(deps Dependencies) RouteMatrix {
 		{Method: http.MethodGet, Path: "/images/{name}/json", Supported: true, Handler: handlers.imageInspect},
 		{Method: http.MethodPost, Path: "/images/create", Supported: true, Handler: handlers.imageCreate},
 		{Method: http.MethodGet, Path: "/images/json", Supported: true, Handler: handlers.imageList},
+		{Method: http.MethodDelete, Path: "/images/{name}", Supported: true, Handler: handlers.imageRemove},
 		{Method: http.MethodPost, Path: "/build", Supported: true, Handler: handlers.build},
 
 		{Method: http.MethodPost, Path: "/containers/create", Supported: true, Handler: handlers.containerCreate},

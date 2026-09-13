@@ -11,6 +11,7 @@ import (
 
 	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/streams"
+	"go.uber.org/zap"
 )
 
 const logFileMode = 0o640
@@ -65,8 +66,16 @@ func (s *Service) discardLogs(id domain.ContainerID) {
 	_ = os.Remove(s.logPath(id))
 }
 
-// CloseLogSinks closes every open log file and is called on daemon shutdown.
+// CloseLogSinks closes every open log file and releases optional backend
+// clients the service owns (currently the image config reader). It is the
+// daemon shutdown hook.
 func (s *Service) CloseLogSinks() {
+	if s.closeImageConfigs != nil {
+		if err := s.closeImageConfigs(); err != nil {
+			s.logger.Warn("failed to close image config reader", zap.Error(err))
+		}
+		s.closeImageConfigs = nil
+	}
 	s.logMu.Lock()
 	sinks := make([]*logSink, 0, len(s.logs))
 	for id, sink := range s.logs {

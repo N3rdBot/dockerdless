@@ -33,6 +33,9 @@ type Service interface {
 	ImagePull(context.Context, ports.PullRequest, io.Writer) error
 	// ImageBuild runs a Dockerfile build, streaming Docker JSON progress.
 	ImageBuild(context.Context, ports.BuildRequest, io.Writer) error
+	// ImageRemove deletes one image reference; force allows removing an image
+	// used by a stopped container.
+	ImageRemove(context.Context, string, bool) (ports.ImageRemoveResult, error)
 
 	// ContainerCreate creates a container from a Docker create request.
 	ContainerCreate(context.Context, ports.ContainerCreateRequest) (ports.ContainerCreateResult, error)

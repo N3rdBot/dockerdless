@@ -24,6 +24,7 @@ type fakeService struct {
 	imageList      func(context.Context) ([]ports.ImageDetail, error)
 	imagePull      func(context.Context, ports.PullRequest, io.Writer) error
 	imageBuild     func(context.Context, ports.BuildRequest, io.Writer) error
+	imageRemove    func(context.Context, string, bool) (ports.ImageRemoveResult, error)
 	create         func(context.Context, ports.ContainerCreateRequest) (ports.ContainerCreateResult, error)
 	list           func(context.Context, bool) ([]domain.Container, error)
 	inspect        func(context.Context, string) (domain.Container, error)
@@ -74,6 +75,13 @@ func (f *fakeService) ImageBuild(ctx context.Context, request ports.BuildRequest
 		return f.imageBuild(ctx, request, out)
 	}
 	return ports.ErrServerError
+}
+
+func (f *fakeService) ImageRemove(ctx context.Context, ref string, force bool) (ports.ImageRemoveResult, error) {
+	if f.imageRemove != nil {
+		return f.imageRemove(ctx, ref, force)
+	}
+	return ports.ImageRemoveResult{}, ports.ErrServerError
 }
 
 func (f *fakeService) ContainerCreate(ctx context.Context, request ports.ContainerCreateRequest) (ports.ContainerCreateResult, error) {

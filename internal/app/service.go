@@ -51,6 +51,10 @@ type Config struct {
 	// reported by /info.
 	ContainerdSocket string
 	BuildKitSocket   string
+	// ImageConfigs optionally resolves OCI image configuration for inspect
+	// responses. Nil uses a containerd-backed reader when ContainerdSocket is
+	// set; tests may inject a fake.
+	ImageConfigs ports.ImageConfigReader
 	// Logger receives service logs; nil uses a no-op logger.
 	Logger *zap.Logger
 	// Clock supplies the current time; nil uses time.Now.
@@ -76,6 +80,9 @@ type Service struct {
 	buildkitSocket   string
 	logger           *zap.Logger
 	now              func() time.Time
+
+	imageConfigs      ports.ImageConfigReader
+	closeImageConfigs func() error
 
 	allocMu sync.Mutex
 	execMu  sync.Mutex
@@ -111,7 +118,7 @@ func New(cfg Config) (*Service, error) {
 	if strings.TrimSpace(cfg.LogDir) == "" {
 		cfg.LogDir = "dockerdless-logs"
 	}
-	return &Service{
+	service := &Service{
 		runtime:          cfg.Runtime,
 		images:           cfg.Images,
 		networks:         cfg.Networks,
@@ -129,7 +136,16 @@ func New(cfg Config) (*Service, error) {
 		now:              cfg.Clock,
 		execs:            make(map[string]*pendingExec),
 		logs:             make(map[domain.ContainerID]*logSink),
-	}, nil
+	}
+	switch {
+	case cfg.ImageConfigs != nil:
+		service.imageConfigs = cfg.ImageConfigs
+	case strings.TrimSpace(cfg.ContainerdSocket) != "":
+		reader := newContainerdImageConfigs(cfg.ContainerdSocket, cfg.Namespace)
+		service.imageConfigs = reader
+		service.closeImageConfigs = reader.Close
+	}
+	return service, nil
 }
 
 // Logger returns the service logger.

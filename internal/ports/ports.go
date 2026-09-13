@@ -171,6 +171,55 @@ type ImageDetail struct {
 	Created time.Time
 	// Labels are the image labels.
 	Labels map[string]string
+	// Config is the image's OCI configuration when the daemon could resolve
+	// it. Docker clients (testcontainers-go among them) read
+	// Config.ExposedPorts from GET /images/{name}/json; a nil Config must
+	// still be rendered as a non-nil envelope by the HTTP layer.
+	Config *ImageConfig
+}
+
+// ImageConfig is the transport-neutral projection of one OCI image
+// configuration (the "config" object of an image manifest).
+type ImageConfig struct {
+	// User is the image USER.
+	User string
+	// ExposedPorts are canonical "port/proto" entries such as "8080/tcp".
+	ExposedPorts []string
+	// Env is the image environment as "KEY=value" entries.
+	Env []string
+	// Entrypoint and Cmd are the image process defaults.
+	Entrypoint []string
+	Cmd        []string
+	// Volumes are the declared anonymous volume paths.
+	Volumes []string
+	// WorkingDir is the image working directory.
+	WorkingDir string
+	// Labels are the image config labels.
+	Labels map[string]string
+	// StopSignal is the configured stop signal.
+	StopSignal string
+}
+
+// ImageConfigReader resolves one stored image's OCI configuration by its
+// Docker image ID (the config digest). It is optional: a nil reader leaves
+// ImageDetail.Config unset.
+type ImageConfigReader interface {
+	// ImageConfig returns the configuration for the image identified by the
+	// given config digest (full digest or unambiguous prefix).
+	ImageConfig(context.Context, string) (ImageConfig, error)
+}
+
+// ImageRemoveResult reports one removed image reference in Docker's
+// DELETE /images/{name} vocabulary.
+type ImageRemoveResult struct {
+	// ID is the Docker image ID of the resolved image.
+	ID domain.ImageID
+	// Untagged is the familiar reference that was untagged, empty when the
+	// request removed an image ID instead.
+	Untagged string
+	// Deleted is the image ID that was deleted, empty when only a tag was
+	// removed.
+	Deleted string
 }
 
 // BuildRequest is one Docker POST /build request decoded into a daemon-neutral

@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/N3rdBot/dockerdless/internal/adapters/buildkit"
+	"github.com/N3rdBot/dockerdless/internal/domain"
 	"github.com/N3rdBot/dockerdless/internal/ports"
+	"go.uber.org/zap"
 )
 
 // ImageInspect implements GET /images/{name}/json.
@@ -22,7 +24,145 @@ func (s *Service) ImageInspect(ctx context.Context, ref string) (ports.ImageDeta
 		}
 		return ports.ImageDetail{}, mapped
 	}
+	s.attachImageConfig(ctx, &detail)
 	return detail, nil
+}
+
+// attachImageConfig merges the resolved OCI image configuration into the
+// inspect projection. A read failure leaves Config unset instead of failing
+// the inspect: the HTTP layer always renders a non-nil Docker Config envelope.
+func (s *Service) attachImageConfig(ctx context.Context, detail *ports.ImageDetail) {
+	if s.imageConfigs == nil || detail == nil {
+		return
+	}
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
+	imageID := string(detail.ID)
+	config, err := s.imageConfigs.ImageConfig(ctx, imageID)
+	if err != nil {
+		s.logger.Warn("failed to resolve image config",
+			zap.String("image_id", imageID),
+			zap.Error(err))
+		return
+	}
+	detail.Config = &config
+}
+
+// ImageRemove implements DELETE /images/{name}. A running container's image is
+// never removable; a stopped container's image needs force. Missing images are
+// Docker 404s.
+func (s *Service) ImageRemove(ctx context.Context, ref string, force bool) (ports.ImageRemoveResult, error) {
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
+
+	ref = strings.TrimPrefix(strings.TrimSpace(ref), "/")
+	if ref == "" {
+		return ports.ImageRemoveResult{}, invalidError("image reference must not be empty")
+	}
+	detail, err := s.images.Inspect(ctx, ref)
+	if err != nil {
+		mapped := translateError(err)
+		if errors.Is(mapped, ports.ErrNotFound) {
+			return ports.ImageRemoveResult{}, newDockerError(ports.ErrNotFound, fmt.Sprintf("No such image: %s", ref), err)
+		}
+		return ports.ImageRemoveResult{}, mapped
+	}
+	if err := s.checkImageInUse(detail, force); err != nil {
+		return ports.ImageRemoveResult{}, err
+	}
+	if err := s.images.Remove(ctx, domain.ImageID(ref)); err != nil {
+		return ports.ImageRemoveResult{}, translateError(err)
+	}
+	result := ports.ImageRemoveResult{ID: detail.ID}
+	if tag, ok := matchingImageTag(ref, detail.RepoTags); ok {
+		result.Untagged = tag
+	} else {
+		result.Deleted = string(detail.ID)
+	}
+	return result, nil
+}
+
+func (s *Service) checkImageInUse(detail ports.ImageDetail, force bool) error {
+	for _, container := range s.registry.List() {
+		if !containerUsesImage(container, detail) {
+			continue
+		}
+		imageID := shortImageID(string(detail.ID))
+		containerID := shortImageID(string(container.ID))
+		switch {
+		case container.State == domain.ContainerStateRunning:
+			return conflictError(
+				"conflict: unable to delete %s (cannot be forced) - image is being used by running container %s",
+				imageID, containerID)
+		case !force:
+			return conflictError(
+				"conflict: unable to delete %s (must be forced) - image is being used by stopped container %s",
+				imageID, containerID)
+		}
+	}
+	return nil
+}
+
+func containerUsesImage(container domain.Container, detail ports.ImageDetail) bool {
+	if digestsMatch(string(container.ImageDigest), string(detail.ID)) {
+		return true
+	}
+	reference := string(container.ImageReference)
+	if strings.TrimSpace(reference) == "" {
+		return false
+	}
+	for _, candidate := range append(append([]string(nil), detail.RepoTags...), detail.RepoDigests...) {
+		if sameImageReference(reference, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+// sameImageReference compares two Docker references after canonicalizing
+// familiar forms such as "alpine:3.20" against "docker.io/library/alpine:3.20".
+func sameImageReference(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	normalizedLeft, leftErr := buildkit.NormalizeReference(left)
+	normalizedRight, rightErr := buildkit.NormalizeReference(right)
+	if leftErr == nil && rightErr == nil {
+		return normalizedLeft == normalizedRight
+	}
+	return strings.TrimPrefix(left, "docker.io/library/") == strings.TrimPrefix(right, "docker.io/library/")
+}
+
+// digestsMatch accepts equal digests and unambiguous prefixes in either
+// direction, so a full config digest matches a stored 12-character ID.
+func digestsMatch(candidate, wanted string) bool {
+	candidate = strings.TrimPrefix(candidate, "sha256:")
+	wanted = strings.TrimPrefix(wanted, "sha256:")
+	if candidate == "" || wanted == "" {
+		return false
+	}
+	return candidate == wanted || strings.HasPrefix(candidate, wanted) || strings.HasPrefix(wanted, candidate)
+}
+
+// matchingImageTag returns the stored familiar tag for ref when the request
+// named a tag rather than an ID.
+func matchingImageTag(ref string, tags []string) (string, bool) {
+	for _, tag := range tags {
+		if sameImageReference(tag, ref) || strings.TrimPrefix(tag, "docker.io/library/") == ref {
+			return tag, true
+		}
+	}
+	return "", false
+}
+
+func shortImageID(id string) string {
+	value := strings.TrimPrefix(id, "sha256:")
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
 }
 
 // ImageList implements GET /images/json.

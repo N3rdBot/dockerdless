@@ -16,6 +16,7 @@ func TestMVPRouteMatrix_containsRequestedCapabilities(t *testing.T) {
 		{Method: http.MethodGet, Path: "/images/{name}/json"},
 		{Method: http.MethodPost, Path: "/images/create"},
 		{Method: http.MethodGet, Path: "/images/json"},
+		{Method: http.MethodDelete, Path: "/images/{name}"},
 		{Method: http.MethodPost, Path: "/build"},
 		{Method: http.MethodPost, Path: "/containers/create"},
 		{Method: http.MethodGet, Path: "/containers/json"},

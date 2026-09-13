@@ -154,8 +154,10 @@ type fakeImages struct {
 	inspectDetail ports.ImageDetail
 	inspectErr    error
 
-	pulls   []string
-	pullErr error
+	pulls     []string
+	pullErr   error
+	removed   []domain.ImageID
+	removeErr error
 
 	list    []ports.ImageDetail
 	listErr error
@@ -167,7 +169,10 @@ func (f *fakeImages) Pull(ctx context.Context, ref string) (domain.ImageID, erro
 	return f.PullImage(ctx, ref, ports.PullRequest{Reference: ref})
 }
 
-func (f *fakeImages) Remove(context.Context, domain.ImageID) error { return nil }
+func (f *fakeImages) Remove(_ context.Context, id domain.ImageID) error {
+	f.removed = append(f.removed, id)
+	return f.removeErr
+}
 
 func (f *fakeImages) PullImage(_ context.Context, ref string, _ ports.PullRequest) (domain.ImageID, error) {
 	f.pulls = append(f.pulls, ref)
@@ -281,4 +286,18 @@ func (f *fakeTasks) TaskPID(context.Context, domain.ContainerID) (int, error) {
 		return 0, f.err
 	}
 	return f.pid, nil
+}
+
+type fakeImageConfigs struct {
+	config          ports.ImageConfig
+	err             error
+	gotConfigDigest string
+}
+
+func (f *fakeImageConfigs) ImageConfig(_ context.Context, configDigest string) (ports.ImageConfig, error) {
+	f.gotConfigDigest = configDigest
+	if f.err != nil {
+		return ports.ImageConfig{}, f.err
+	}
+	return f.config, nil
 }
