@@ -1,0 +1,99 @@
+name: Feature proposal
+description: Propose a new endpoint, feature, or compatibility-surface change.
+title: "[Feature]: "
+labels: ["feature", "proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to start a feature proposal. It captures enough for triage.
+
+        **Full proposals belong in the repo.** Once the idea has traction, copy
+        `docs/proposals/0000-template.md` to `docs/proposals/<number>-<slug>.md`
+        and open a PR. The design convention lives in
+        [CONTRIBUTING.md](https://github.com/N3rdBot/dockerdless/blob/main/CONTRIBUTING.md)
+        and `docs/process/collaboration.md`.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence describing the feature.
+      placeholder: Support the Docker events endpoint for container lifecycle events.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve, and who hits it? Link any issue or client behavior that needs it.
+      placeholder: testcontainers-go calls GET /events and currently gets a 501, which breaks ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: goals
+    attributes:
+      label: Goals
+      description: What this proposal will do. Keep it concrete and testable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What is explicitly out of scope, so reviewers do not expand it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: docker_api_impact
+    attributes:
+      label: Docker API impact
+      description: Which endpoints, request fields, or response fields change? Note any new route, version pin, or error shape.
+      placeholder: |
+        New route: GET /events (stream).
+        Container create field policy: no change.
+        Unsupported cases return 501 with {"message": "..."}.
+    validations:
+      required: true
+
+  - type: textarea
+    id: native_mapping
+    attributes:
+      label: Native mapping
+      description: How does this map onto containerd, BuildKit, or CNI? Name the adapter boundary you expect to touch.
+      placeholder: Subscribe to containerd task events, translate to Docker action taxonomy in internal/adapters/containerd.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other designs you weighed and why you rejected them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: testing_strategy
+    attributes:
+      label: Testing strategy
+      description: Unit tests, integration coverage, and the live backend matrix this needs.
+      placeholder: |
+        Unit: translation table in internal/adapters/containerd.
+        Integration: start a container and assert the emitted event under -tags=integration.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I checked docs/compatibility.md and this is not already listed as unsupported by design.
+          required: true
+        - label: I am willing to write the proposal and, if accepted, the implementation.
+          required: false

@@ -165,3 +165,18 @@ Pinned in [`go.mod`](go.mod) (Go `1.27.1`):
   troubleshooting, log locations.
 - [docs/security.md](docs/security.md) — trust boundary, socket permissions,
   credential handling.
+
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) for prerequisites, the exact build
+and test commands, the Conventional Commits plus `git commit -s` sign-off rule,
+and the PR and review flow. Small fixes can go straight to a PR. New endpoints,
+features, or compatibility-surface changes need a
+[feature proposal](docs/proposals/0000-template.md); design-level changes get a
+[design doc](docs/design/0000-template.md); irreversible decisions become an
+[ADR](docs/adr/0000-template.md). The process details live in
+[docs/process/collaboration.md](docs/process/collaboration.md),
+[docs/process/review-checklist.md](docs/process/review-checklist.md), and
+[docs/process/definition-of-done.md](docs/process/definition-of-done.md).
+Report vulnerabilities privately per [SECURITY.md](SECURITY.md), never in a public
+issue.

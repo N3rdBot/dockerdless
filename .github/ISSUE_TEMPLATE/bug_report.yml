@@ -1,0 +1,105 @@
+name: Bug report
+description: Report a reproducible defect in dockerdless.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Check
+        [docs/compatibility.md](https://github.com/N3rdBot/dockerdless/blob/main/docs/compatibility.md)
+        first: if the behavior is listed there as unsupported by design, it is
+        expected, not a bug.
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: Describe the actual behavior. Include the exact request or command and the response.
+      placeholder: |
+        curl --unix-socket /tmp/dockerdless.sock http://localhost/v1.44/containers/json returned ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What Docker would do here, or what the docs say should happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal, ordered steps. Include the full client command or script and any container/image used.
+      placeholder: |
+        1. Start dockerdless on /tmp/dockerdless.sock.
+        2. export DOCKER_HOST=unix:///tmp/dockerdless.sock
+        3. docker run --rm alpine true
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: version_output
+    attributes:
+      label: Daemon version
+      description: The daemon version string and the output of GET /version.
+      render: shell
+      placeholder: |
+        Version: 0.0.0-dev
+        curl --unix-socket /tmp/dockerdless.sock http://localhost/version
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and kernel, Go version, and the containerd, BuildKit, and CNI plugin versions in use.
+      render: shell
+      placeholder: |
+        OS: Ubuntu 24.04, kernel 6.8.0
+        Go: go1.27.1
+        containerd: 2.3.5
+        BuildKit: 0.33.0
+        CNI plugins: 1.3.1 (bridge, host-local, portmap, firewall, loopback)
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste the daemon log lines for the request. Include the X-Request-Id response header so the logs can be correlated.
+      render: shell
+      placeholder: |
+        X-Request-Id: 3f1c9a...
+        {"level":"error","msg":...}
+    validations:
+      required: false
+
+  - type: dropdown
+    id: compatibility_impact
+    attributes:
+      label: Compatibility impact
+      description: Does this change what a Docker client observes on a documented path?
+      options:
+        - Not sure
+        - No, behavior matches the documented compatibility matrix
+        - Yes, a documented behavior is wrong or missing
+        - Yes, an unsupported request fails in the wrong way (not a Docker-shaped error)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md, not a public issue).
+          required: true

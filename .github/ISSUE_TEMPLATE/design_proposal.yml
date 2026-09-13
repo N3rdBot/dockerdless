@@ -1,0 +1,76 @@
+name: Design proposal
+description: "Propose a design for an accepted feature: interfaces, state, and error mapping."
+title: "[Design]: "
+labels: ["design", "proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for a design-level change (interfaces, data/state model,
+        or error mapping). A feature proposal should already be accepted.
+
+        **Full designs belong in the repo.** Copy `docs/design/0000-template.md`
+        to `docs/design/<number>-<slug>.md` and open a PR. See
+        `docs/process/collaboration.md` for the flow.
+
+  - type: input
+    id: linked_proposal
+    attributes:
+      label: Linked proposal
+      description: The issue or docs/proposals file this design implements.
+      placeholder: docs/proposals/0007-container-events.md or #42
+    validations:
+      required: true
+
+  - type: textarea
+    id: design_scope
+    attributes:
+      label: Design scope
+      description: What this design decides, and what it deliberately leaves alone.
+    validations:
+      required: true
+
+  - type: textarea
+    id: interfaces
+    attributes:
+      label: Interfaces
+      description: The ports and adapter contracts this adds or changes. Note the internal/ packages and any new interface methods.
+      placeholder: |
+        internal/ports: add an EventStream port.
+        internal/adapters/containerd: implement it over the containerd events client.
+    validations:
+      required: true
+
+  - type: textarea
+    id: data_state
+    attributes:
+      label: Data and state changes
+      description: Durable state, in-memory structures, concurrency, and lifecycle. Note the locking or reconciliation impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: error_mapping
+    attributes:
+      label: Error mapping
+      description: How native errors map to Docker-shaped HTTP responses. Every failure path needs a defined status and body.
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test plan
+      description: Unit, race, and integration coverage. Name the tests you will add.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: The linked feature proposal is accepted.
+          required: true
+        - label: This design keeps the hexagonal boundaries (domain and ports stay free of containerd, BuildKit, and CNI types).
+          required: true

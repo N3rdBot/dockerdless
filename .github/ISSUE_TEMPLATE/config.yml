@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Docker API compatibility reference
+    url: https://github.com/N3rdBot/dockerdless/blob/main/docs/compatibility.md
+    about: Check the verified Docker API mapping and the unsupported-feature list before filing a bug.
+  - name: Operations runbook
+    url: https://github.com/N3rdBot/dockerdless/blob/main/docs/operations.md
+    about: Startup, configuration reload, namespaces, troubleshooting, and cleanup.
+  - name: Report a security vulnerability
+    url: https://github.com/N3rdBot/dockerdless/security/policy
+    about: Do not file a public issue for a vulnerability. Report it privately following SECURITY.md.

@@ -1,0 +1,23 @@
+# CODEOWNERS for dockerdless.
+#
+# The last matching pattern wins, so the default owner is listed first and
+# path-specific owners follow. Owners are GitHub usernames or teams.
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not matched below.
+* @N3rdBot
+
+# Decision records and proposal documents.
+/docs/adr/ @N3rdBot
+/docs/proposals/ @N3rdBot
+/docs/design/ @N3rdBot
+
+# API surface and adapter boundaries.
+/internal/api/ @N3rdBot
+/internal/adapters/ @N3rdBot
+
+# Daemon entrypoint and composition root.
+/cmd/ @N3rdBot
+
+# Integration harness and live backend matrix.
+/integration/ @N3rdBot
