@@ -1,0 +1,13 @@
+# systemd-tmpfiles configuration for dockerdless.
+#
+# Install as /etc/tmpfiles.d/dockerdless.conf, then apply once with:
+#   systemd-tmpfiles --create /etc/tmpfiles.d/dockerdless.conf
+#
+# The service unit already declares RuntimeDirectory=dockerdless, so /run is
+# created on every service start. This file additionally creates the persistent
+# config directory and pre-creates the runtime directory at boot for tooling
+# that inspects it before dockerdless starts. Both are idempotent.
+#
+# type  path              mode  user  group  age  argument
+d       /run/dockerdless  0750  root  root   -    -
+d       /etc/dockerdless  0750  root  root   -    -

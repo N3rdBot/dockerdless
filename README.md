@@ -180,3 +180,12 @@ features, or compatibility-surface changes need a
 [docs/process/definition-of-done.md](docs/process/definition-of-done.md).
 Report vulnerabilities privately per [SECURITY.md](SECURITY.md), never in a public
 issue.
+
+## Deployment
+
+Operator instructions live in [docs/deployment.md](docs/deployment.md): host
+readiness checks, install, the systemd path, upgrades, uninstall, verification,
+and the security posture. Ready-to-install artifacts are in
+[deploy/systemd/](deploy/systemd/) (recommended for production) and the
+container layout is under [deploy/docker/](deploy/docker/); see
+[deploy/README.md](deploy/README.md) for the index.

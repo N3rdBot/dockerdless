@@ -1,0 +1,84 @@
+# dockerdless systemd unit.
+#
+# Install (root):
+#   install -m 0644 deploy/systemd/dockerdless.service /etc/systemd/system/dockerdless.service
+#   install -d -m 0750 /etc/dockerdless
+#   install -m 0600 deploy/systemd/dockerdless.env      /etc/dockerdless/dockerdless.env
+#   install -m 0644 deploy/systemd/dockerdless.tmpfiles /etc/tmpfiles.d/dockerdless.conf
+#   systemd-tmpfiles --create /etc/tmpfiles.d/dockerdless.conf
+#   systemctl daemon-reload
+#   systemctl enable --now dockerdless
+#
+# See docs/deployment.md for the full procedure.
+#
+# dockerdless is a FOREGROUND, rootful daemon. It installs SIGINT/SIGTERM
+# handlers, stops serving, flushes telemetry/logs, removes its socket, and exits
+# 0 within a fixed 5-second shutdown bound. It does not daemonize itself and has
+# no rootless mode: network namespaces, CNI bridges, and iptables rules all
+# require euid 0, and it connects to the root-owned containerd and BuildKit
+# sockets.
+
+[Unit]
+Description=dockerdless Docker-compatible containerd/BuildKit daemon
+Documentation=https://github.com/N3rdBot/dockerdless/blob/main/docs/deployment.md
+After=network-online.target containerd.service buildkit.service
+Wants=network-online.target containerd.service buildkit.service
+
+[Service]
+Type=simple
+
+# The daemon requires euid 0. There is no rootless mode.
+User=root
+Group=root
+
+ExecStart=/usr/local/bin/dockerdless
+
+# The env file carries DOCKERDLESS_SOCKET_PATH, DOCKERDLESS_CONFIG_FILE and
+# DOCKERDLESS_LOG_LEVEL. The leading "-" keeps the daemon startable from the
+# built-in defaults if the file is absent. Note that if the file sets
+# DOCKERDLESS_CONFIG_FILE, that YAML file must exist or the daemon exits non-zero.
+EnvironmentFile=-/etc/dockerdless/dockerdless.env
+
+# Foreground process: SIGTERM asks the daemon to shut down. Its internal
+# shutdown bound is 5s, so TimeoutStopSec must exceed that.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Nothing restarts the daemon for us; it must survive transient backend errors.
+Restart=on-failure
+RestartSec=2
+
+# Socket and container logs live under /run/dockerdless. This must match
+# DOCKERDLESS_SOCKET_PATH in the env file. /run is tmpfs, so both are per-boot.
+RuntimeDirectory=dockerdless
+RuntimeDirectoryMode=0750
+
+# A container daemon holds many descriptors; 1M covers realistic fan-out.
+LimitNOFILE=1048576
+
+# Hardening that survives root. ProtectSystem=strict mounts the whole hierarchy
+# read-only except /dev, /proc and /sys; the paths below are the only writable
+# locations this daemon needs:
+#   /run/dockerdless  - API socket and dockerdless-logs/
+#   /etc/cni/net.d    - the CNI conflists the daemon writes for Docker networks
+# If DOCKERDLESS_CNI_CONFIG_DIR is changed, update ReadWritePaths to match.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/run/dockerdless /etc/cni/net.d
+
+# Deliberately NOT set, and why:
+# - NoNewPrivileges: the daemon execs CNI plugins and drives containerd/runc
+#   through namespace, mount, and network setup that relies on privileged
+#   transitions (setuid/setgid and file capabilities); forbidding new privileges
+#   breaks that setup.
+# - PrivateNetwork: the daemon must program the host network (CNI bridges,
+#   veth pairs, iptables DNAT for published ports) and reach registries, so it
+#   needs the host's interfaces, routes, and addresses, not a private namespace.
+# - ProtectKernelTunables: netns/iptables/CNI setup reads and writes host
+#   networking sysctls under /proc/sys, which ProtectKernelTunables hides.
+# - ProtectKernelModules / PrivateMounts: left at defaults because the container
+#   runtime may load modules and perform mounts on the host.
+
+[Install]
+WantedBy=multi-user.target
