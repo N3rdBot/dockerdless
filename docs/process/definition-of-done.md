@@ -96,7 +96,8 @@ go test -tags=integration -count=1 -v ./integration/...
 
 ## Commits
 
-- [ ] Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
+- [ ] Commit messages follow the
+      [commit conventions](commit-conventions.md) spec.
 - [ ] Every commit is signed off under the DCO with `git commit -s`; each commit
       carries a `Signed-off-by` trailer.
 - [ ] Commits are atomic and reviewable.
@@ -151,7 +152,7 @@ by each of these.
 - [ ] The pull request records the command, raw result, skip, and SHA
 
 ### Commits
-- [ ] Conventional Commits messages
+- [ ] Commit messages follow [Conventional Commits](commit-conventions.md)
 - [ ] Every commit signed off with `git commit -s`
 - [ ] Atomic commits, no secrets or binaries
 

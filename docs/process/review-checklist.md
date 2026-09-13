@@ -143,10 +143,10 @@ reviewer runs it again and cites the section when raising a defect.
 
 ## Commits
 
-- [ ] Messages follow [Conventional Commits](https://www.conventionalcommits.org/):
+- [ ] Messages follow the [commit conventions](commit-conventions.md) spec:
       `feat(api):`, `fix(containerd):`, `docs(compatibility):`, `test(integration):`.
-- [ ] Every commit is signed off under the DCO with `git commit -s`. The
-      `Signed-off-by` trailer is present.
+- [ ] Every commit is signed off under the DCO with `git commit -s`.
+  - [ ] The `Signed-off-by` trailer is present on every commit.
 - [ ] Commits are atomic. A compatibility-table update is in the commit that
       changes the behavior, not a separate drive-by.
 - [ ] No secrets, no generated binaries (`bin/`), and no unrelated whitespace

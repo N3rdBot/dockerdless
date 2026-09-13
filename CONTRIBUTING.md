@@ -108,9 +108,9 @@ Write every commit as:
 Signed-off-by: Your Name <you@example.com>
 ```
 
-Common types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `build`,
-`perf`. Pick a scope that names the area you touched, for example `server`,
-`runtime`, `config`, `io`, or `compat`.
+The full grammar, allowed types, scope vocabulary, body/footer rules, and
+examples are in
+[docs/process/commit-conventions.md](docs/process/commit-conventions.md).
 
 The sign-off line is **mandatory**. This project uses the
 [Developer Certificate of Origin](https://developercertificate.org/), so every
@@ -122,6 +122,15 @@ git commit -s -m "fix(runtime): release reserved ports once"
 
 `-s` appends the `Signed-off-by` trailer from your configured `user.name` and
 `user.email`. A PR with unsigned commits will be asked to amend before review.
+
+Install the local hook once per clone so the format is checked before your commit
+lands:
+
+```bash
+make hooks
+```
+
+It sets `core.hooksPath=.githooks` and enforces the message format locally.
 
 ## Branch naming
 

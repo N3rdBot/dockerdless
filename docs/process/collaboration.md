@@ -181,8 +181,8 @@ the author knows what to fix.
 
 **Artifact:** commits on the default branch.
 
-- [Conventional Commits](https://www.conventionalcommits.org/): `feat(api):`,
-  `fix(containerd):`, `docs(compatibility):`, `test(integration):`.
+- Messages follow the [commit conventions](commit-conventions.md) spec:
+  `feat(api):`, `fix(containerd):`, `docs(compatibility):`, `test(integration):`.
 - Every commit is signed off under the DCO: `git commit -s`.
 - Keep commits atomic and reviewable. Do not mix a compatibility-table update
   into an unrelated refactor. The compatibility row moves in the same commit as
@@ -219,7 +219,8 @@ A change may merge only when all of these hold:
    result, including any skip and its reason.
 5. **Review passed.** [`review-checklist.md`](review-checklist.md) walked by a
    named reviewer.
-6. **Commits clean.** Conventional Commits, `Signed-off-by` present, atomic.
+6. **Commits clean.** [Commit conventions](commit-conventions.md) followed,
+   `Signed-off-by` present, atomic.
 
 ## Working artifacts and what gets committed
 
