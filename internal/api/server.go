@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -28,6 +31,7 @@ type Server struct {
 	shutdownTimeout time.Duration
 
 	mu       sync.Mutex
+	logger   *zap.Logger
 	listener net.Listener
 	http     *http.Server
 }
@@ -44,6 +48,16 @@ func WithShutdownTimeout(timeout time.Duration) ServerOption {
 	}
 }
 
+// WithSocketLogger attaches a structured logger used for socket security
+// decisions (repairs of unsafe stale sockets). A nil logger is ignored.
+func WithSocketLogger(logger *zap.Logger) ServerOption {
+	return func(server *Server) {
+		if logger != nil {
+			server.logger = logger
+		}
+	}
+}
+
 // NewServer validates the API boundary and stores the configured handler.
 func NewServer(socketPath string, handler http.Handler, options ...ServerOption) (*Server, error) {
 	if strings.TrimSpace(socketPath) == "" {
@@ -56,6 +70,7 @@ func NewServer(socketPath string, handler http.Handler, options ...ServerOption)
 		socketPath:      socketPath,
 		handler:         handler,
 		shutdownTimeout: DefaultShutdownTimeout,
+		logger:          zap.NewNop(),
 	}
 	for _, option := range options {
 		if option != nil {
@@ -81,8 +96,16 @@ func (s *Server) SocketPath() string {
 	return s.socketPath
 }
 
-// Listen binds the Unix socket. It creates the parent directory, removes a
-// stale socket file (never a live one), listens, and applies 0660 permissions.
+// Listen binds the Unix socket. Security gate, in order:
+//
+//  1. A parent directory is created with 0755 when missing.
+//  2. A path that exists but is not a socket is refused untouched.
+//  3. A live socket is refused untouched.
+//  4. A stale socket owned by another uid is refused untouched.
+//  5. A stale socket with permissions beyond 0660 is tightened to 0660 (and
+//     logged) before it is unlinked, so the exposed path never survives startup.
+//  6. The freshly bound socket is re-verified as a 0660 socket owned by this
+//     process; any mismatch closes it and refuses to serve.
 func (s *Server) Listen() (net.Listener, error) {
 	if s == nil {
 		return nil, errors.New("API server is nil")
@@ -97,7 +120,7 @@ func (s *Server) Listen() (net.Listener, error) {
 			return nil, fmt.Errorf("create socket directory %s: %w", directory, err)
 		}
 	}
-	if err := removeStaleSocket(s.socketPath); err != nil {
+	if err := s.removeStaleSocket(); err != nil {
 		return nil, err
 	}
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "unix", s.socketPath)
@@ -107,6 +130,10 @@ func (s *Server) Listen() (net.Listener, error) {
 	if err := os.Chmod(s.socketPath, socketMode); err != nil {
 		_ = listener.Close()
 		return nil, fmt.Errorf("set socket permissions on %s: %w", s.socketPath, err)
+	}
+	if err := verifySocketBinding(s.socketPath); err != nil {
+		_ = listener.Close()
+		return nil, err
 	}
 	s.listener = listener
 	s.http = &http.Server{
@@ -182,25 +209,104 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // removeStaleSocket unlinks a leftover socket file, but refuses to remove a
-// live socket or a non-socket file.
-func removeStaleSocket(path string) error {
-	info, err := os.Lstat(path)
+// live socket, a non-socket file, or a socket owned by another uid. It repairs
+// a stale socket with permissions wider than 0660 before unlinking it.
+func (s *Server) removeStaleSocket() error {
+	info, err := os.Lstat(s.socketPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("inspect socket %s: %w", path, err)
+		return fmt.Errorf("inspect socket %s: %w", s.socketPath, err)
 	}
 	if info.Mode()&os.ModeSocket == 0 {
-		return fmt.Errorf("path %s exists and is not a socket", path)
+		return fmt.Errorf("path %s exists and is not a socket", s.socketPath)
 	}
+	if err := probeLiveSocket(s.socketPath); err != nil {
+		return err
+	}
+	if err := s.ensureSocketOwnership(info); err != nil {
+		return err
+	}
+	if err := s.repairUnsafeSocketMode(info); err != nil {
+		return err
+	}
+	if err := os.Remove(s.socketPath); err != nil {
+		return fmt.Errorf("remove stale socket %s: %w", s.socketPath, err)
+	}
+	return nil
+}
+
+// ensureSocketOwnership refuses to unlink a stale socket that this process does
+// not own, so a foreign listener's filesystem state is never destroyed.
+func (s *Server) ensureSocketOwnership(info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	if uid := int(stat.Uid); uid != os.Geteuid() {
+		return fmt.Errorf("refusing to remove socket %s owned by uid %d (daemon uid %d)", s.socketPath, uid, os.Geteuid())
+	}
+	return nil
+}
+
+// repairUnsafeSocketMode tightens a stale socket whose permissions grant
+// anything beyond user and group read/write. The repair is best-effort and
+// audited: if the mode cannot be tightened the daemon refuses to start rather
+// than leaving an exposed socket behind.
+func (s *Server) repairUnsafeSocketMode(info os.FileInfo) error {
+	perm := info.Mode().Perm()
+	if !unsafeSocketMode(perm) {
+		return nil
+	}
+	if err := os.Chmod(s.socketPath, socketMode); err != nil {
+		return fmt.Errorf("socket %s has unsafe permissions %04o and could not be repaired: %w", s.socketPath, perm, err)
+	}
+	s.logger.Warn("repaired unsafe socket permissions",
+		zap.String("socket_path", s.socketPath),
+		zap.String("previous_mode", fmt.Sprintf("%04o", perm)),
+		zap.String("repaired_mode", fmt.Sprintf("%04o", socketMode)))
+	return nil
+}
+
+// unsafeSocketMode reports whether mode grants access beyond 0660. A socket
+// that is missing owner access is also unsafe: the daemon could not serve it.
+func unsafeSocketMode(mode os.FileMode) bool {
+	const safe = os.FileMode(socketMode)
+	return mode&^safe != 0 || mode&0o600 != 0o600
+}
+
+// probeLiveSocket reports whether a socket at path accepts connections. A live
+// socket is never removed; the daemon refuses to start instead.
+func probeLiveSocket(path string) error {
 	conn, err := net.DialTimeout("unix", path, staleSocketDialWait)
-	if err == nil {
-		_ = conn.Close()
-		return fmt.Errorf("socket %s is already in use", path)
+	if err != nil {
+		return nil
 	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	_ = conn.Close()
+	return fmt.Errorf("socket %s is already in use", path)
+}
+
+// verifySocketBinding re-checks the freshly created socket: exactly 0660, a
+// socket file, and owned by the daemon uid. The check makes the security
+// guarantee independent of umask, listener creation path, and any later chmod.
+func verifySocketBinding(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("verify socket %s: %w", path, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("verify socket %s: not a socket after bind", path)
+	}
+	if perm := info.Mode().Perm(); perm != socketMode {
+		return fmt.Errorf("verify socket %s: permissions %04o, want %04o", path, perm, socketMode)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil
+	}
+	if uid := int(stat.Uid); uid != os.Geteuid() {
+		return fmt.Errorf("verify socket %s: owned by uid %d, want daemon uid %d", path, uid, os.Geteuid())
 	}
 	return nil
 }

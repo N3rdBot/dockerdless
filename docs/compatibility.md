@@ -121,3 +121,24 @@ go test -tags=integration -count=1 -v ./integration/...
 The integration suite skips, with an explicit reason, when the host lacks root,
 containerd, BuildKit, or the CNI plugins, and the image-pull subtest skips when
 containerd has no direct registry egress. It never silently passes.
+
+## Version pins
+
+The verification run recorded above was produced against these pins from
+[`go.mod`](../go.mod) (Go `1.27.1`):
+
+| Dependency | Version |
+| --- | --- |
+| `github.com/moby/moby/api` | `v1.56.0` |
+| `github.com/moby/moby/client` | `v0.6.0` |
+| `github.com/containerd/containerd/v2` | `v2.3.5` |
+| `github.com/containernetworking/cni` | `v1.3.1` |
+| `github.com/moby/buildkit` | `v0.33.0` |
+| `go.uber.org/zap` | `v1.28.0` |
+| `github.com/spf13/viper` | `v1.21.0` |
+| `go.opentelemetry.io/otel` | `v1.46.0` |
+| `github.com/testcontainers/testcontainers-go` | `v0.44.0` |
+
+The daemon's trust boundary, socket permissions, and credential handling are
+documented in [security.md](security.md); operational procedures live in
+[operations.md](operations.md).

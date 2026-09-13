@@ -98,7 +98,10 @@ func run(args []string) error {
 		Logger:  logger.Logger,
 	}, logger.Logger)
 
-	server, err := api.NewServer(cfg.SocketPath, handler, api.WithShutdownTimeout(shutdownTimeout))
+	server, err := api.NewServer(cfg.SocketPath, handler,
+		api.WithShutdownTimeout(shutdownTimeout),
+		api.WithSocketLogger(logger.Logger),
+	)
 	if err != nil {
 		return errors.Join(
 			fmt.Errorf("initialize API server: %w", err),

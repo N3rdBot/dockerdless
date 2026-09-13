@@ -7,72 +7,151 @@ Engine API surface that [testcontainers-go](https://golang.testcontainers.org/)
 needs, so existing test suites can point `DOCKER_HOST` at it instead of a
 Docker daemon.
 
-## MVP scope
+It is an MVP, not a Docker replacement. The verified API mapping and the exact
+unsupported-feature list live in [docs/compatibility.md](docs/compatibility.md).
 
-- Docker API `1.44` over a Unix socket. Clients that do not negotiate the API
-  version must pin it: `DOCKER_API_VERSION=1.44`.
-- Verified live with testcontainers-go `v0.44.0`: image inspect/pull/build,
-  container create/start/stop/remove, published-port mapping, `wait.ForHTTP`,
-  `wait.ForLog`, `wait.ForExec`, container logs, exec, networks, and
-  `ContainerList`-based reuse.
-- The reaper (Ryuk) is intentionally disabled. Set
-  `TESTCONTAINERS_RYUK_DISABLED=true` and clean up with
-  `testcontainers.CleanupContainer` or `t.Cleanup`.
-- Not supported: CRI, rootless mode, Swarm, Compose, registry push/login,
-  events, volumes, multi-network containers. The exact Docker-shaped error for
-  each is listed in [docs/compatibility.md](docs/compatibility.md).
+## What it is and is not
+
+**Serves:** Docker API `1.44` (minimum `1.24`) over a Unix socket — image
+inspect/pull/build/remove, container create/start/stop/remove/inspect/list,
+container logs, exec, networks, and port publishing. Verified live against
+testcontainers-go `v0.44.0`.
+
+**Does not serve:** CRI, rootless mode, Ryuk (the testcontainers reaper), Swarm,
+Compose, registry push/login, events, volumes, multi-network containers, and the
+other endpoints listed in
+[docs/compatibility.md](docs/compatibility.md#unsupported-features). Every
+unsupported route answers with the Docker-shaped error documented there.
 
 ## Requirements
 
-- Linux with root (euid 0) — network namespaces, CNI bridges, and iptables
-  rules require it.
-- containerd at `/run/containerd/containerd.sock`.
-- BuildKit at `/run/buildkit/buildkitd.sock`.
+- Linux with root (euid 0). Network namespaces, CNI bridges, and iptables rules
+  require it. There is no rootless mode.
+- containerd listening on `/run/containerd/containerd.sock`.
+- BuildKit listening on `/run/buildkit/buildkitd.sock`.
 - CNI plugins in `/opt/cni/bin`: `bridge`, `host-local`, `portmap`,
   `firewall`, `loopback`.
+- The daemon must be able to write the socket's parent directory.
 
-## Build and run
+See [docs/security.md](docs/security.md) for the trust boundary and
+[docs/operations.md](docs/operations.md) for the runbook.
+
+## Quick start
 
 ```bash
+# 1. Build the daemon.
 make build
-DOCKERDLESS_SOCKET_PATH=/tmp/dockerdless.sock ./bin/dockerdless
+
+# 2. Run it on a private socket (default is /var/run/dockerdless.sock).
+DOCKERDLESS_SOCKET_PATH=/tmp/dockerdless.sock sudo -E ./bin/dockerdless
+
+# 3. In another shell, confirm it is alive.
 curl --unix-socket /tmp/dockerdless.sock http://localhost/_ping
+# -> OK
+
+# 4. Point any Docker client at it.
+export DOCKER_HOST=unix:///tmp/dockerdless.sock
+export DOCKER_API_VERSION=1.44   # the daemon does not negotiate for old clients
+docker version
 ```
 
-Useful environment overrides (see `internal/config` for the full schema):
-`DOCKERDLESS_SOCKET_PATH`, `DOCKERDLESS_CONTAINERD_SOCKET`,
-`DOCKERDLESS_BUILDKIT_SOCKET`, `DOCKERDLESS_CONTAINERD_NAMESPACE`,
-`DOCKERDLESS_CNI_CONFIG_DIR`, `DOCKERDLESS_CNI_PLUGIN_DIR`,
-`DOCKERDLESS_LOG_LEVEL`. The `enable-cri` and `enable-rootless` settings are
-inert forward-compatibility placeholders; this MVP never serves CRI and never
-runs rootless.
+`DOCKER_API_VERSION=1.44` is required for clients that do not negotiate the API
+version (testcontainers-go among them). Unversioned requests negotiate to
+`1.44` automatically.
 
-## Use with testcontainers-go
+### Use with testcontainers-go
 
 ```bash
 export DOCKER_HOST=unix:///tmp/dockerdless.sock
 export DOCKER_API_VERSION=1.44
 export TESTCONTAINERS_RYUK_DISABLED=true
+# Published ports are reachable on the host's own addresses, not on 127.0.0.1;
+# see the troubleshooting note in docs/operations.md.
+export TESTCONTAINERS_HOST_OVERRIDE="$(hostname -I | awk '{print $1}')"
 go test ./...
 ```
 
-Published ports are reachable on the host's own addresses. Set
-`TESTCONTAINERS_HOST_OVERRIDE` to a host address when the daemon runs over a
-Unix socket, since the CNI portmap rules do not provide a userland loopback
-proxy; see [docs/compatibility.md](docs/compatibility.md#published-ports).
+Ryuk is intentionally disabled: set `TESTCONTAINERS_RYUK_DISABLED=true` and
+clean up with `testcontainers.CleanupContainer` or `t.Cleanup`.
 
-## Verification
+## Configuration reference
+
+Every setting is an environment variable. There is no config file and no
+command-line flag except `-help`. Reload-on-change is not wired in the MVP:
+restart the daemon to apply changes.
+
+| Environment variable | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `DOCKERDLESS_SOCKET_PATH` | absolute path | `/var/run/dockerdless.sock` | Docker API Unix socket. Created `0660`, owned by the daemon uid; see [docs/security.md](docs/security.md). |
+| `DOCKERDLESS_LOG_LEVEL` | `debug`\|`info`\|`warn`\|`error`\|`dpanic`\|`panic`\|`fatal` | `info` | Structured (JSON) log level. Output goes to stderr. |
+| `DOCKERDLESS_OTEL_SERVICE_NAME` | non-empty string | `dockerdless` | `service.name` resource for OpenTelemetry. |
+| `DOCKERDLESS_OTEL_ENDPOINT` | `host:port`, `http://…`, or `https://…` | empty (disabled) | OTLP gRPC endpoint for traces, metrics, and logs. Empty means fully offline; exporters are not constructed. `https://` enables TLS. |
+| `DOCKERDLESS_CONTAINERD_NAMESPACE` | non-empty string | `moby` | containerd namespace for containers, tasks, and images. When left at the built-in `moby` default the daemon switches to `default` to match the local BuildKit worker (see [docs/operations.md](docs/operations.md#containerd-namespaces)). |
+| `DOCKERDLESS_CONTAINERD_SOCKET` | absolute path | `/run/containerd/containerd.sock` | containerd socket. |
+| `DOCKERDLESS_CNI_CONFIG_DIR` | absolute path | `/etc/cni/net.d` | Directory where the daemon writes network conflists. |
+| `DOCKERDLESS_CNI_PLUGIN_DIR` | absolute path | `/opt/cni/bin` | CNI plugin directory. |
+| `DOCKERDLESS_BUILDKIT_SOCKET` | absolute path | `/run/buildkit/buildkitd.sock` | BuildKit daemon socket. |
+| `DOCKERDLESS_DEFAULT_STOP_TIMEOUT` | Go duration (`10s`, `1m30s`) | `10s` | Default SIGTERM→SIGKILL escalation window for container stop. |
+| `DOCKERDLESS_REQUEST_TIMEOUT` | Go duration | `30s` | Per-request timeout bound. |
+| `DOCKERDLESS_ENABLE_CRI` | bool | `false` | Inert forward-compatibility placeholder. The MVP never serves CRI. |
+| `DOCKERDLESS_ENABLE_ROOTLESS` | bool | `false` | Inert forward-compatibility placeholder. The MVP never runs rootless. |
+
+Container log files are written to `dockerdless-logs/` beside the socket
+directory (for example `/tmp/dockerdless-logs/<container-id>.log`) and are
+served through `GET /containers/{id}/logs`.
+
+## Release gates
+
+Run the full command set before shipping:
 
 ```bash
-go test -race -count=1 ./...   # unit + race
-go vet ./...                   # static checks
-go build ./...                 # build
-make integration               # real containerd/BuildKit/CNI matrix
+gofmt -l .                                        # must print nothing
+go vet ./...                                      # static analysis
+go build ./...                                    # compile everything
+go test -race -count=1 ./...                      # unit + race detector
+go test -tags=integration -count=1 ./integration/...   # real containerd/BuildKit/CNI
+go test -run=^$ -bench=. -benchtime=200ms ./internal/streams/... ./internal/adapters/cni/...
 ```
+
+The same gates are wrapped in the Makefile:
+
+```bash
+make verify       # gofmt + go vet + go test -race -count=1 ./...
+make integration  # real backend matrix (skips with a recorded reason when unavailable)
+make bench        # bounded, deterministic hot-path benchmarks
+make release      # verify + bench
+```
+
+`make lint` (golangci-lint) is best-effort on this host: the installed binary is
+built with go1.26 and cannot load the go1.27.1 module, so `gofmt` + `go vet` are
+the authoritative static gates. See
+[docs/operations.md](docs/operations.md#static-analysis).
 
 The integration suite skips, with an explicit reason, when the host lacks root,
 containerd, BuildKit, or the CNI plugins. It never silently passes.
 
-See [docs/compatibility.md](docs/compatibility.md) for the verified
-Docker API → dockerdless adapter → native primitive → testcontainers-go mapping
-and the complete unsupported-feature list.
+## Version pins
+
+Pinned in [`go.mod`](go.mod) (Go `1.27.1`):
+
+| Dependency | Version |
+| --- | --- |
+| `github.com/moby/moby/api` | `v1.56.0` |
+| `github.com/moby/moby/client` | `v0.6.0` |
+| `github.com/containerd/containerd/v2` | `v2.3.5` |
+| `github.com/containernetworking/cni` | `v1.3.1` |
+| `github.com/moby/buildkit` | `v0.33.0` |
+| `go.uber.org/zap` | `v1.28.0` |
+| `github.com/spf13/viper` | `v1.21.0` |
+| `go.opentelemetry.io/otel` | `v1.46.0` |
+| `github.com/testcontainers/testcontainers-go` | `v0.44.0` |
+
+## Documentation
+
+- [docs/compatibility.md](docs/compatibility.md) — verified Docker API mapping
+  and the complete unsupported-feature list.
+- [docs/architecture.md](docs/architecture.md) — layers, boundaries, data flow.
+- [docs/operations.md](docs/operations.md) — runbook, namespaces,
+  troubleshooting, log locations.
+- [docs/security.md](docs/security.md) — trust boundary, socket permissions,
+  credential handling.
