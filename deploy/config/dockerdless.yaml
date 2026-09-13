@@ -1,0 +1,57 @@
+# dockerdless full configuration sample.
+#
+# Every key the daemon understands, annotated with its built-in default.
+# Keys are kebab-case. Point the daemon at this file with:
+#   DOCKERDLESS_CONFIG_FILE=deploy/config/dockerdless.yaml ./bin/dockerdless
+#
+# Values below are production-sensible starting points. The default is noted
+# beside each key. Environment variables override this file, and the file
+# overrides the built-in defaults; see docs/configuration.md.
+
+# Docker-compatible Unix socket. The daemon creates the parent directory 0755
+# when missing and makes the socket 0660. (default: /var/run/dockerdless.sock)
+socket-path: /run/dockerdless/dockerdless.sock
+
+# Structured log level. This is the only key applied on hot reload.
+# One of: debug, info, warn, error, dpanic, panic, fatal. (default: info)
+log-level: info
+
+# OpenTelemetry service.name resource. (default: dockerdless)
+otel-service-name: dockerdless
+
+# OTLP gRPC endpoint. Empty disables OpenTelemetry export entirely.
+# host:port and http:// use plaintext; https:// enables TLS. (default: empty)
+otel-endpoint: ""
+
+# containerd namespace for containers, tasks, and images. The built-in default
+# moby is aligned to default at startup to match the local BuildKit worker; an
+# explicit default here makes that alignment unnecessary. (default: moby)
+containerd-namespace: default
+
+# containerd Unix socket. (default: /run/containerd/containerd.sock)
+containerd-socket: /run/containerd/containerd.sock
+
+# Directory where the daemon writes CNI network conflists.
+# (default: /etc/cni/net.d)
+cni-config-dir: /etc/cni/net.d
+
+# CNI plugin directory. (default: /opt/cni/bin)
+cni-plugin-dir: /opt/cni/bin
+
+# BuildKit daemon Unix socket. (default: /run/buildkit/buildkitd.sock)
+buildkit-socket: /run/buildkit/buildkitd.sock
+
+# Default SIGTERM to SIGKILL escalation window for a container stop.
+# Must be greater than zero. (default: 10s)
+default-stop-timeout: 10s
+
+# Per-request timeout bound. Must be greater than zero. (default: 30s)
+request-timeout: 30s
+
+# Reserved forward-compatibility flag. CRI is not implemented, so this has no
+# effect on daemon behavior. (default: false)
+enable-cri: false
+
+# Reserved forward-compatibility flag. Rootless mode is not implemented, so
+# this has no effect on daemon behavior. (default: false)
+enable-rootless: false

@@ -1,0 +1,8 @@
+# Smallest working dockerdless configuration: a private Docker-compatible
+# socket. Everything else uses the built-in defaults.
+#
+#   DOCKERDLESS_CONFIG_FILE=deploy/config/dockerdless.minimal.yaml ./bin/dockerdless
+#
+# The built-in default socket is /var/run/dockerdless.sock.
+
+socket-path: /tmp/dockerdless.sock

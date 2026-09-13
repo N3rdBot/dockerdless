@@ -1,0 +1,24 @@
+# dockerdless configuration for the testcontainers-go workflow.
+#
+#   DOCKERDLESS_CONFIG_FILE=deploy/config/dockerdless.testcontainers.yaml ./bin/dockerdless
+#
+# Client-side environment (set in the shell or test process, NOT here, because
+# these are read by the test client rather than by the daemon):
+#   export DOCKER_HOST=unix:///tmp/dockerdless.sock
+#   export DOCKER_API_VERSION=1.44
+#   export TESTCONTAINERS_RYUK_DISABLED=true
+#   export TESTCONTAINERS_HOST_OVERRIDE="$(hostname -I | awk '{print $1}')"
+#
+# TESTCONTAINERS_HOST_OVERRIDE points the library at a host address, because
+# published ports answer on the host's non-loopback addresses, not on 127.0.0.1.
+# It lives in the client environment; the daemon never reads it.
+
+# Private socket for the test run. (default: /var/run/dockerdless.sock)
+socket-path: /tmp/dockerdless.sock
+
+# Keep test logs at info; raise to debug when diagnosing. (default: info)
+log-level: info
+
+# Match the local BuildKit worker so built images stay visible to the runtime.
+# (default: moby, which the daemon aligns to default at startup)
+containerd-namespace: default
