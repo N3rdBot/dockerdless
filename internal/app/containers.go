@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,11 @@ import (
 )
 
 var containerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+const (
+	containerImageDigestLabel = "io.dockerdless.image-digest"
+	containerCommandLabel     = "io.dockerdless.command"
+)
 
 // ContainerCreate implements POST /containers/create: it resolves and pins the
 // image digest, ensures the requested network exists, allocates concrete host
@@ -89,6 +95,17 @@ func (s *Service) ContainerCreate(ctx context.Context, request ports.ContainerCr
 		bindings = filled
 	}
 
+	commandJSON, err := json.Marshal(request.Command)
+	if err != nil {
+		return ports.ContainerCreateResult{}, serverError("encode container command: %v", err)
+	}
+	labels := cloneLabels(request.Labels)
+	if request.TTY {
+		labels[ports.LabelTTY] = "true"
+	}
+	labels[containerImageDigestLabel] = string(detail.ID)
+	labels[containerCommandLabel] = string(commandJSON)
+
 	containerID, err := s.runtime.CreateContainer(ctx, ports.ContainerCreateSpec{
 		Name:       name,
 		Image:      domain.ImageID(runtimeImageReference(request.Image, detail)),
@@ -98,7 +115,7 @@ func (s *Service) ContainerCreate(ctx context.Context, request ports.ContainerCr
 		WorkingDir: request.WorkingDir,
 		User:       request.User,
 		Hostname:   request.Hostname,
-		Labels:     request.Labels,
+		Labels:     labels,
 		Mounts:     request.Mounts,
 		TTY:        request.TTY,
 		OpenStdin:  request.OpenStdin,
@@ -113,10 +130,6 @@ func (s *Service) ContainerCreate(ctx context.Context, request ports.ContainerCr
 	}
 
 	now := s.now()
-	labels := cloneLabels(request.Labels)
-	if request.TTY {
-		labels[ports.LabelTTY] = "true"
-	}
 	containers := domain.Container{
 		ID:             containerID,
 		Name:           name,
@@ -144,6 +157,9 @@ func (s *Service) ContainerList(ctx context.Context, all bool) ([]domain.Contain
 	listed := make([]domain.Container, 0, len(containers))
 	for _, container := range containers {
 		updated, changed := s.refresh(ctx, container)
+		normalized := normalizeContainerTimestamps(updated, s.now())
+		changed = changed || normalized.StartedAt != updated.StartedAt || normalized.FinishedAt != updated.FinishedAt
+		updated = normalized
 		if changed {
 			s.save(ctx, updated)
 		}
@@ -162,6 +178,9 @@ func (s *Service) ContainerInspect(ctx context.Context, ref string) (domain.Cont
 		return domain.Container{}, err
 	}
 	updated, changed := s.refresh(ctx, container)
+	normalized := normalizeContainerTimestamps(updated, s.now())
+	changed = changed || normalized.StartedAt != updated.StartedAt || normalized.FinishedAt != updated.FinishedAt
+	updated = normalized
 	if changed {
 		s.save(ctx, updated)
 	}
@@ -201,6 +220,7 @@ func (s *Service) ContainerStart(ctx context.Context, ref string) error {
 		s.logger.Warn("container finished before its network namespace could be joined",
 			zap.String("container_id", string(container.ID)),
 			zap.Error(connectErr))
+		s.releaseBindings(container.PortBindings)
 	}
 	if state, statusErr := s.runtime.Status(ctx, container.ID); statusErr == nil &&
 		state != domain.ContainerStateRunning && state != domain.ContainerStateCreated {
@@ -249,7 +269,10 @@ func (s *Service) ContainerStop(ctx context.Context, ref string, timeout *time.D
 	if err := s.runtime.Stop(ctx, container.ID, effective); err != nil {
 		return translateError(err)
 	}
-	updated, _ := s.refresh(ctx, container)
+	updated, refreshed := s.refresh(ctx, container)
+	if !refreshed {
+		updated = container
+	}
 	updated.State = domain.ContainerStateExited
 	s.closeLogSink(container.ID)
 	s.save(ctx, updated)
@@ -265,7 +288,10 @@ func (s *Service) ContainerRemove(ctx context.Context, ref string, force bool) e
 	if err != nil {
 		return err
 	}
-	state, _ := s.runtime.Status(ctx, container.ID)
+	state, statusErr := s.runtime.Status(ctx, container.ID)
+	if statusErr != nil {
+		return translateError(statusErr)
+	}
 	if force && state != domain.ContainerStateExited {
 		_ = s.runtime.Stop(context.WithoutCancel(ctx), container.ID, 0)
 		state = domain.ContainerStateExited
@@ -279,7 +305,9 @@ func (s *Service) ContainerRemove(ctx context.Context, ref string, force bool) e
 			zap.String("container_id", string(container.ID)),
 			zap.Error(disconnectErr))
 	}
-	s.releaseBindings(container.PortBindings)
+	if container.State == domain.ContainerStateCreated {
+		s.releaseBindings(container.PortBindings)
+	}
 	if err := s.runtime.Remove(ctx, container.ID); err != nil {
 		return translateError(err)
 	}
@@ -309,7 +337,12 @@ func (s *Service) ContainerLogs(ctx context.Context, ref string, options ports.L
 	if !options.Stderr {
 		errOut = io.Discard
 	}
-	return streams.ReadLogs(ctx, path, streams.LogOptions{
+	followCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if options.Follow {
+		go s.cancelFollowWhenExited(followCtx, container.ID, cancel)
+	}
+	return streams.ReadLogs(followCtx, path, streams.LogOptions{
 		Follow:     options.Follow,
 		Tail:       options.Tail,
 		Since:      options.Since,
@@ -317,6 +350,31 @@ func (s *Service) ContainerLogs(ctx context.Context, ref string, options ports.L
 		Timestamps: options.Timestamps,
 		Format:     streams.LogFormatCRI,
 	}, out, errOut)
+}
+
+func (s *Service) cancelFollowWhenExited(ctx context.Context, id domain.ContainerID, cancel context.CancelFunc) {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		state, err := s.runtime.Status(ctx, id)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.logger.Warn("failed to observe container while following logs",
+					zap.String("container_id", string(id)), zap.Error(err))
+				cancel()
+			}
+			return
+		}
+		if state != domain.ContainerStateRunning && state != domain.ContainerStateCreated {
+			cancel()
+			return
+		}
+	}
 }
 
 type containerAttachment struct {
@@ -342,20 +400,36 @@ func (s *Service) attachNetwork(ctx context.Context, container domain.Container)
 	if err != nil {
 		return nil, translateError(err)
 	}
-	result, err := func() (ports.NetworkAttachmentResult, error) {
+	request := ports.NetworkConnectRequest{
+		Network:   network.Name,
+		Container: container.ID,
+		NetNS:     fmt.Sprintf("/proc/%d/ns/net", pid),
+		Ports:     container.PortBindings,
+	}
+	reservedConnector, hasReservedConnector := s.networks.(interface {
+		ConnectReserved(context.Context, ports.NetworkConnectRequest) (ports.NetworkAttachmentResult, error)
+	})
+	var result ports.NetworkAttachmentResult
+	if hasReservedConnector {
+		result, err = reservedConnector.ConnectReserved(ctx, request)
+	} else {
 		s.allocMu.Lock()
-		defer s.allocMu.Unlock()
 		if len(container.PortBindings) > 0 && s.alloc != nil {
 			s.alloc.Release(s.reservationsFor(container.PortBindings)...)
 		}
-		return s.networks.Connect(ctx, ports.NetworkConnectRequest{
-			Network:   network.Name,
-			Container: container.ID,
-			NetNS:     fmt.Sprintf("/proc/%d/ns/net", pid),
-			Ports:     container.PortBindings,
-		})
-	}()
+		s.allocMu.Unlock()
+		result, err = s.networks.Connect(ctx, request)
+	}
 	if err != nil {
+		if hasReservedConnector && len(container.PortBindings) > 0 && s.alloc != nil {
+			s.allocMu.Lock()
+			_, _, reserveErr := s.alloc.AllocateBindings(container.PortBindings)
+			s.allocMu.Unlock()
+			if reserveErr != nil && !errors.Is(reserveErr, cni.ErrPortInUse) {
+				s.logger.Warn("failed to restore container port reservations after network failure",
+					zap.String("container_id", string(container.ID)), zap.Error(reserveErr))
+			}
+		}
 		return nil, err
 	}
 	return &containerAttachment{attachment: result.Attachment, ports: result.Ports}, nil
@@ -407,6 +481,8 @@ func networkAttachment(mode cni.Mode, network ports.NetworkDetail) domain.Networ
 func (s *Service) refresh(ctx context.Context, container domain.Container) (domain.Container, bool) {
 	state, err := s.runtime.Status(ctx, container.ID)
 	if err != nil {
+		s.logger.Warn("failed to refresh container state",
+			zap.String("container_id", string(container.ID)), zap.Error(err))
 		return container, false
 	}
 	if container.State == domain.ContainerStateCreated && state != domain.ContainerStateRunning {
@@ -418,6 +494,7 @@ func (s *Service) refresh(ctx context.Context, container domain.Container) (doma
 	updated := container
 	updated.State = state
 	if state != domain.ContainerStateRunning && state != domain.ContainerStateCreated {
+		s.closeLogSink(container.ID)
 		waitCtx, cancel := context.WithTimeout(ctx, exitStatusTimeout)
 		exit, waitErr := s.runtime.Wait(waitCtx, container.ID)
 		cancel()
@@ -433,4 +510,22 @@ func (s *Service) refresh(ctx context.Context, container domain.Container) (doma
 		updated.ExitCode != container.ExitCode ||
 		!updated.FinishedAt.Equal(container.FinishedAt)
 	return updated, changed
+}
+
+func normalizeContainerTimestamps(container domain.Container, now time.Time) domain.Container {
+	if container.State == domain.ContainerStateRunning || container.State == domain.ContainerStatePaused {
+		if container.StartedAt.IsZero() {
+			container.StartedAt = container.CreatedAt
+			if container.StartedAt.IsZero() {
+				container.StartedAt = now
+			}
+		}
+	}
+	if container.State == domain.ContainerStateExited && container.FinishedAt.IsZero() {
+		container.FinishedAt = container.CreatedAt
+		if container.FinishedAt.IsZero() {
+			container.FinishedAt = now
+		}
+	}
+	return container
 }

@@ -28,6 +28,7 @@ var (
 	ErrNoFreeHostPort = errors.New("no free host port found")
 	// ErrUnallocatedPort rejects a port binding that still has host port 0.
 	ErrUnallocatedPort = errors.New("port binding has no allocated host port")
+	ErrPortNotReserved = errors.New("host port is not reserved")
 	// ErrUnsupportedProtocol rejects protocols other than tcp and udp.
 	ErrUnsupportedProtocol = errors.New("unsupported port protocol")
 )
@@ -166,6 +167,24 @@ func (a *PortAllocator) Release(allocs ...PortAllocation) {
 		}
 		delete(a.used, portKey{proto, normalizeHostIP(alloc.HostIP), alloc.HostPort})
 	}
+}
+
+func (a *PortAllocator) AdoptBindings(bindings []domain.PortBinding) ([]PortAllocation, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	allocations := make([]PortAllocation, 0, len(bindings))
+	for _, binding := range bindings {
+		protocol, err := normalizeProtocol(binding.Protocol)
+		if err != nil {
+			return nil, err
+		}
+		allocation := PortAllocation{Protocol: protocol, HostIP: normalizeHostIP(binding.HostIP), HostPort: binding.HostPort}
+		if _, ok := a.used[portKey{protocol, allocation.HostIP, allocation.HostPort}]; !ok {
+			return nil, fmt.Errorf("cni: %s:%d: %w", allocation.HostIP, allocation.HostPort, ErrPortNotReserved)
+		}
+		allocations = append(allocations, allocation)
+	}
+	return allocations, nil
 }
 
 // IsUsed reports whether the host port is reserved, honoring wildcard IPs.

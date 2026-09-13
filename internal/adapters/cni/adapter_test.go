@@ -15,6 +15,7 @@ import (
 
 	"github.com/N3rdBot/dockerdless/internal/adapters/cni"
 	"github.com/N3rdBot/dockerdless/internal/domain"
+	"github.com/N3rdBot/dockerdless/internal/ports"
 )
 
 var errFakeUnsupported = errors.New("fakeCNI: unsupported method")
@@ -382,6 +383,43 @@ func TestConnectRollsBackPortsOnCNIAddFailure(t *testing.T) {
 		Ports: []domain.PortBinding{{ContainerPort: 80, Protocol: "tcp", HostPort: 54000}},
 	}); err != nil {
 		t.Fatalf("dynamic port 54000 leaked after failed add: %v", err)
+	}
+}
+
+func TestConnectReservedRetainsCreateReservationAfterCNIAddFailure(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	fake := &fakeCNI{addResult: sampleResult(), addErr: errors.New("bridge plugin exploded")}
+	allocator := cni.NewPortAllocator(fixedPortProbe(54000))
+	adapter := cni.New(cni.Config{NetConfDir: dir, CNI: fake, Allocator: allocator})
+	if _, err := adapter.Create(ctx, "web"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := allocator.Allocate("tcp", "", 54000); err != nil {
+		t.Fatalf("reserve create-time port: %v", err)
+	}
+	request := ports.NetworkConnectRequest{
+		Network:   "web",
+		Container: "container-1",
+		NetNS:     "/ns/c1",
+		Ports:     []domain.PortBinding{{ContainerPort: 80, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 54000}},
+	}
+	if _, err := adapter.ConnectReserved(ctx, request); err == nil {
+		t.Fatal("ConnectReserved succeeded with failing CNI ADD")
+	}
+	if !allocator.IsUsed("tcp", "", 54000) {
+		t.Fatal("create-time reservation was released after failed reserved ADD")
+	}
+
+	fake.addErr = nil
+	if _, err := adapter.ConnectReserved(ctx, request); err != nil {
+		t.Fatalf("retry ConnectReserved: %v", err)
+	}
+	if err := adapter.Disconnect(ctx, cni.DisconnectRequest{Network: "web", Container: "container-1", NetNS: "/ns/c1"}); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if allocator.IsUsed("tcp", "", 54000) {
+		t.Fatal("reservation remained after CNI-owned disconnect")
 	}
 }
 

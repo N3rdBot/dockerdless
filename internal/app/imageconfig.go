@@ -24,8 +24,10 @@ type containerdImageConfigs struct {
 	namespace string
 
 	once    sync.Once
+	mu      sync.Mutex
 	client  *containerdclient.Client
 	openErr error
+	closed  bool
 }
 
 func newContainerdImageConfigs(socket, namespace string) *containerdImageConfigs {
@@ -39,7 +41,9 @@ func (c *containerdImageConfigs) ImageConfig(ctx context.Context, configDigest s
 	if configDigest == "" {
 		return ports.ImageConfig{}, fmt.Errorf("%w: image config digest is required", ports.ErrInvalidArgument)
 	}
-	client, err := c.open()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	client, err := c.openLocked()
 	if err != nil {
 		return ports.ImageConfig{}, fmt.Errorf("%w: open containerd for image config: %w", ports.ErrServerError, err)
 	}
@@ -73,7 +77,9 @@ func (c *containerdImageConfigs) Close() error {
 	if c == nil {
 		return nil
 	}
-	c.once.Do(func() {})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
 	if c.client == nil {
 		return nil
 	}
@@ -82,7 +88,10 @@ func (c *containerdImageConfigs) Close() error {
 	return err
 }
 
-func (c *containerdImageConfigs) open() (*containerdclient.Client, error) {
+func (c *containerdImageConfigs) openLocked() (*containerdclient.Client, error) {
+	if c.closed {
+		return nil, errors.New("containerd image config reader is closed")
+	}
 	c.once.Do(func() {
 		c.client, c.openErr = containerdclient.New(c.socket)
 	})

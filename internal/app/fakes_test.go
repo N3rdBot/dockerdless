@@ -203,11 +203,13 @@ type fakeNetworks struct {
 	resolveByName map[string]ports.NetworkDetail
 	resolveErr    error
 
-	connectRequests []ports.NetworkConnectRequest
-	connectResult   ports.NetworkAttachmentResult
-	connectErr      error
+	connectRequests        []ports.NetworkConnectRequest
+	connectResult          ports.NetworkAttachmentResult
+	connectErr             error
+	connectReservedRelease func(ports.NetworkConnectRequest)
 
-	disconnectErrs []error
+	disconnectErrs    []error
+	disconnectAllFunc func(context.Context, domain.ContainerID) []error
 
 	createRequests []ports.NetworkCreateRequest
 	createErr      error
@@ -272,7 +274,17 @@ func (f *fakeNetworks) Connect(_ context.Context, request ports.NetworkConnectRe
 	return f.connectResult, nil
 }
 
-func (f *fakeNetworks) DisconnectAll(context.Context, domain.ContainerID) []error {
+func (f *fakeNetworks) ConnectReserved(ctx context.Context, request ports.NetworkConnectRequest) (ports.NetworkAttachmentResult, error) {
+	if f.connectErr != nil && f.connectReservedRelease != nil {
+		f.connectReservedRelease(request)
+	}
+	return f.Connect(ctx, request)
+}
+
+func (f *fakeNetworks) DisconnectAll(ctx context.Context, id domain.ContainerID) []error {
+	if f.disconnectAllFunc != nil {
+		return f.disconnectAllFunc(ctx, id)
+	}
 	return f.disconnectErrs
 }
 

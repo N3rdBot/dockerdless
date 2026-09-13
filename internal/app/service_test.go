@@ -94,6 +94,44 @@ func TestContainerCreate_unknownImageReturnsDocker404(t *testing.T) {
 	}
 }
 
+func TestContainerList_zeroStartedAtUsesCreatedAtForStatus(t *testing.T) {
+	runtime := newFakeRuntime()
+	service := testService(t, runtime, &fakeImages{}, newFakeNetworks(), &fakeTasks{pid: 1})
+	createdAt := time.Now().Add(-time.Minute)
+	container := domain.Container{
+		ID:        "running-zero-start",
+		Name:      "web",
+		Spec:      domain.ContainerSpec{Image: "alpine:latest"},
+		State:     domain.ContainerStateRunning,
+		CreatedAt: createdAt,
+	}
+	if err := service.registry.Save(context.Background(), container); err != nil {
+		t.Fatalf("seed container: %v", err)
+	}
+	runtime.states[container.ID] = domain.ContainerStateRunning
+
+	listed, err := service.ContainerList(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ContainerList: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected one container, got %d", len(listed))
+	}
+	if !listed[0].StartedAt.Equal(createdAt) {
+		t.Fatalf("expected zero StartedAt to fall back to CreatedAt %v, got %v", createdAt, listed[0].StartedAt)
+	}
+	if err := service.registry.Save(context.Background(), container); err != nil {
+		t.Fatalf("reset container: %v", err)
+	}
+	inspected, err := service.ContainerInspect(context.Background(), string(container.ID))
+	if err != nil {
+		t.Fatalf("ContainerInspect: %v", err)
+	}
+	if !inspected.StartedAt.Equal(createdAt) {
+		t.Fatalf("expected inspect zero StartedAt to fall back to CreatedAt %v, got %v", createdAt, inspected.StartedAt)
+	}
+}
+
 func TestContainerCreate_allocatesHostPortsAndPersistsIdentity(t *testing.T) {
 	runtime := newFakeRuntime()
 	images := &fakeImages{inspectDetail: ports.ImageDetail{
@@ -107,6 +145,7 @@ func TestContainerCreate_allocatesHostPortsAndPersistsIdentity(t *testing.T) {
 	result, err := service.ContainerCreate(ctx, ports.ContainerCreateRequest{
 		Name:         "web",
 		Image:        "alpine:latest",
+		Command:      []string{"/bin/sh", "-c", "echo hello"},
 		PortBindings: []domain.PortBinding{{ContainerPort: 80, Protocol: "tcp"}},
 	})
 	if err != nil {
@@ -120,6 +159,12 @@ func TestContainerCreate_allocatesHostPortsAndPersistsIdentity(t *testing.T) {
 	}
 	if len(runtime.createSpecs) != 1 || runtime.createSpecs[0].Name != "web" {
 		t.Fatalf("expected runtime create with name web, got %+v", runtime.createSpecs)
+	}
+	if got := runtime.createSpecs[0].Labels[containerImageDigestLabel]; got != "sha256:cafebabe" {
+		t.Fatalf("expected digest label, got %q", got)
+	}
+	if got := runtime.createSpecs[0].Labels[containerCommandLabel]; got != `["/bin/sh","-c","echo hello"]` {
+		t.Fatalf("expected command label, got %q", got)
 	}
 	container, err := service.registry.Get(ctx, result.ID)
 	if err != nil {
@@ -338,6 +383,110 @@ func TestContainerLogs_streamsCRILinesWithTail(t *testing.T) {
 
 	if got := stdout.String(); got != "second\n" {
 		t.Fatalf("expected tailed log line, got %q", got)
+	}
+}
+
+func TestContainerList_closesLogSinkAfterContainerExit(t *testing.T) {
+	runtime := newFakeRuntime()
+	service := testService(t, runtime, &fakeImages{}, newFakeNetworks(), &fakeTasks{pid: 1})
+	container := seedContainer(t, service, "container-1", "web", domain.ContainerStateRunning, nil, nil)
+	sink, err := service.openLogSink(container.ID)
+	if err != nil {
+		t.Fatalf("openLogSink: %v", err)
+	}
+	if _, err := sink.file.WriteString("log survives sink close\n"); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	runtime.setState(container.ID, domain.ContainerStateExited)
+	runtime.waitResult = ports.ProcessExit{ExitCode: 0, ExitedAt: time.Now()}
+
+	if _, err := service.ContainerList(context.Background(), true); err != nil {
+		t.Fatalf("ContainerList: %v", err)
+	}
+	if _, err := sink.file.WriteString("must fail after close\n"); err == nil {
+		t.Fatal("log sink remained writable after container exit")
+	}
+	if _, err := os.Stat(service.logPath(container.ID)); err != nil {
+		t.Fatalf("log file disappeared after sink close: %v", err)
+	}
+}
+
+func TestContainerRemove_doesNotReleaseCNIOwnedReservationTwice(t *testing.T) {
+	runtime := newFakeRuntime()
+	networks := newFakeNetworks()
+	allocator := cni.NewPortAllocator(cni.WithPortProbe(func(_, _ string, requested uint16) (uint16, error) {
+		return requested, nil
+	}))
+	service := testService(t, runtime, &fakeImages{}, networks, &fakeTasks{pid: 1})
+	service.alloc = NewPortAllocator(allocator)
+	container := seedContainer(t, service, "container-1", "web", domain.ContainerStateExited,
+		[]domain.PortBinding{{ContainerPort: 80, Protocol: "tcp", HostPort: 45000}},
+		[]domain.NetworkAttachment{{Name: "bridge"}})
+	reserved, err := allocator.Allocate("tcp", "", 45000)
+	if err != nil {
+		t.Fatalf("reserve port: %v", err)
+	}
+	liveReservation := make(chan error, 1)
+	networks.disconnectAllFunc = func(context.Context, domain.ContainerID) []error {
+		allocator.Release(reserved)
+		_, allocateErr := allocator.Allocate("tcp", "", 45000)
+		liveReservation <- allocateErr
+		return nil
+	}
+
+	if err := service.ContainerRemove(context.Background(), string(container.ID), false); err != nil {
+		t.Fatalf("ContainerRemove: %v", err)
+	}
+	if err := <-liveReservation; err != nil {
+		t.Fatalf("live reservation could not be acquired during disconnect: %v", err)
+	}
+	if !allocator.IsUsed("tcp", "", 45000) {
+		t.Fatal("live reservation was released a second time by app removal")
+	}
+}
+
+func TestContainerStart_retryAfterReservedCNIAddFailureKeepsReservation(t *testing.T) {
+	runtime := newFakeRuntime()
+	networks := newFakeNetworks()
+	allocator := cni.NewPortAllocator(cni.WithPortProbe(func(_, _ string, requested uint16) (uint16, error) {
+		return requested, nil
+	}))
+	service := testService(t, runtime, &fakeImages{inspectDetail: ports.ImageDetail{ID: "sha256:image"}}, networks, &fakeTasks{pid: 7})
+	service.alloc = NewPortAllocator(allocator)
+
+	created, err := service.ContainerCreate(context.Background(), ports.ContainerCreateRequest{
+		Name:         "web",
+		Image:        "alpine:latest",
+		PortBindings: []domain.PortBinding{{ContainerPort: 80, Protocol: "tcp", HostPort: 45000}},
+	})
+	if err != nil {
+		t.Fatalf("ContainerCreate: %v", err)
+	}
+	networks.connectErr = errors.New("bridge plugin exploded")
+	networks.connectReservedRelease = func(request ports.NetworkConnectRequest) {
+		allocator.Release(cni.PortAllocation{Protocol: request.Ports[0].Protocol, HostIP: request.Ports[0].HostIP, HostPort: request.Ports[0].HostPort})
+	}
+	if err := service.ContainerStart(context.Background(), string(created.ID)); err == nil {
+		t.Fatal("ContainerStart succeeded with failing CNI ADD")
+	}
+	if !allocator.IsUsed("tcp", "", 45000) {
+		t.Fatal("reservation was lost after failed CNI ADD")
+	}
+
+	networks.connectErr = nil
+	if err := service.ContainerStart(context.Background(), string(created.ID)); err != nil {
+		t.Fatalf("ContainerStart retry: %v", err)
+	}
+	runtime.setState(created.ID, domain.ContainerStateExited)
+	networks.disconnectAllFunc = func(context.Context, domain.ContainerID) []error {
+		allocator.Release(cni.PortAllocation{Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 45000})
+		return nil
+	}
+	if err := service.ContainerRemove(context.Background(), string(created.ID), false); err != nil {
+		t.Fatalf("ContainerRemove: %v", err)
+	}
+	if allocator.IsUsed("tcp", "", 45000) {
+		t.Fatal("reservation was not released by removal")
 	}
 }
 

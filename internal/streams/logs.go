@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -128,7 +129,7 @@ func FindTailStart(f io.ReadSeeker, n int64) (int64, error) {
 			return 0, err
 		}
 		chunk := buf[:readLen]
-		for i := len(chunk) - 1; i >= 0; i-- {
+		for i := range slices.Backward(chunk) {
 			if chunk[i] != '\n' {
 				continue
 			}
@@ -157,6 +158,11 @@ func ReadLogs(ctx context.Context, path string, opts LogOptions, stdout, stderr 
 	)
 	for {
 		if ctx.Err() != nil {
+			if started {
+				if err := flushAvailableLogs(path, &offset, opts, stdout, stderr); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		file, err := os.Open(path)
@@ -196,9 +202,33 @@ func ReadLogs(ctx context.Context, path string, opts LogOptions, stdout, stderr 
 			return nil
 		}
 		if sleepErr := sleepCtx(ctx, opts.PollInterval); sleepErr != nil {
+			if err := flushAvailableLogs(path, &offset, opts, stdout, stderr); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
+}
+
+func flushAvailableLogs(path string, offset *int64, opts LogOptions, stdout, stderr io.Writer) error {
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("streams: opening log file %q for final flush: %w", path, err)
+	}
+	defer file.Close()
+	stat, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("streams: stat log file %q for final flush: %w", path, err)
+	}
+	if stat.Size() < *offset {
+		*offset = 0
+	}
+	next, _, err := emitLogLines(file, *offset, opts, stdout, stderr)
+	*offset = next
+	return err
 }
 
 func emitLogLines(file *os.File, offset int64, opts LogOptions, stdout, stderr io.Writer) (int64, bool, error) {

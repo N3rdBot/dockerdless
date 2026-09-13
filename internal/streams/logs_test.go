@@ -266,6 +266,33 @@ func TestReadLogsFollowPicksUpNewLinesAndRotation(t *testing.T) {
 	}
 }
 
+func TestReadLogsFollowFlushesAvailableLineOnCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cancel.log")
+	if err := os.WriteFile(path, []byte("first\n"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var out, errOut syncBuffer
+	done := make(chan error, 1)
+	go func() {
+		done <- streams.ReadLogs(ctx, path, streams.LogOptions{Follow: true, PollInterval: time.Second}, &out, &errOut)
+	}()
+	waitFor(t, 3*time.Second, func() bool { return strings.Contains(out.String(), "first\n") }, "initial line")
+	appendFile(t, path, "final\n")
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ReadLogs after cancellation: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ReadLogs did not stop after cancellation")
+	}
+	if !strings.Contains(out.String(), "final\n") {
+		t.Fatalf("stdout = %q, want final line after cancellation", out.String())
+	}
+}
+
 func appendFile(t *testing.T, path, line string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)

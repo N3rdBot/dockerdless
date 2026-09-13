@@ -385,6 +385,32 @@ func (a *Adapter) networkInUse(name string) (bool, error) {
 // entirely; named networks allocate concrete host ports first, then invoke the
 // CNI ADD with the portmappings capability.
 func (a *Adapter) Connect(ctx context.Context, req ConnectRequest) (ConnectResult, error) {
+	return a.connect(ctx, req, nil, false)
+}
+
+func (a *Adapter) ConnectReserved(ctx context.Context, req ports.NetworkConnectRequest) (ports.NetworkAttachmentResult, error) {
+	converted := ConnectRequest{
+		Network:   req.Network,
+		Container: req.Container,
+		NetNS:     req.NetNS,
+		Ports:     req.Ports,
+		Aliases:   req.Aliases,
+	}
+	allocations, err := a.alloc.AdoptBindings(req.Ports)
+	if err != nil {
+		return ports.NetworkAttachmentResult{}, err
+	}
+	result, err := a.connect(ctx, converted, allocations, true)
+	if err != nil {
+		return ports.NetworkAttachmentResult{}, err
+	}
+	return ports.NetworkAttachmentResult{
+		Attachment: result.Attachment,
+		Ports:      result.Ports,
+	}, nil
+}
+
+func (a *Adapter) connect(ctx context.Context, req ConnectRequest, reserved []PortAllocation, preallocated bool) (ConnectResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ConnectResult{}, err
 	}
@@ -417,13 +443,17 @@ func (a *Adapter) Connect(ctx context.Context, req ConnectRequest) (ConnectResul
 		return ConnectResult{}, fmt.Errorf("cni: loading network %q: %w", network.Name, err)
 	}
 
-	filled, allocations, err := a.alloc.AllocateBindings(req.Ports)
-	if err != nil {
-		return ConnectResult{}, err
+	filled := append([]domain.PortBinding(nil), req.Ports...)
+	allocations := reserved
+	if !preallocated {
+		filled, allocations, err = a.alloc.AllocateBindings(req.Ports)
+		if err != nil {
+			return ConnectResult{}, err
+		}
 	}
 	rollback := true
 	defer func() {
-		if rollback {
+		if rollback && !preallocated {
 			a.alloc.Release(allocations...)
 		}
 	}()
