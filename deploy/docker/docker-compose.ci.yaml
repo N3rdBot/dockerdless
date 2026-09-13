@@ -1,0 +1,73 @@
+# CI-flavored dockerdless deployment.
+#
+# Same host coupling as docker-compose.yaml (host net/PID namespaces,
+# privileged, host backend sockets), tuned for a CI runner:
+#
+#   * the runtime socket is bind-mounted to a stable workspace path,
+#   * the healthcheck polls fast so `up -d --wait` never races startup,
+#   * `restart: "no"` so a failed job does not leave a supervisor looping.
+#
+# Backend socket locations are overridable because CI images vary:
+#   CONTAINERD_SOCKET=/run/k3s/containerd/containerd.sock \
+#   BUILDKIT_SOCKET=/run/buildkit/buildkitd.sock \
+#     docker compose -f deploy/docker/docker-compose.ci.yaml up -d --wait
+#
+# Typical job, run from the repository root:
+#
+#   mkdir -p deploy/docker/run
+#   docker compose -f deploy/docker/docker-compose.ci.yaml up -d --wait
+#   export DOCKER_HOST="unix://$PWD/deploy/docker/run/dockerdless.sock"
+#   export DOCKER_API_VERSION=1.44
+#   export TESTCONTAINERS_RYUK_DISABLED=true
+#   export TESTCONTAINERS_HOST_OVERRIDE="$(hostname -I | awk '{print $1}')"
+#   go test -tags=integration -count=1 ./integration/...
+#   docker compose -f deploy/docker/docker-compose.ci.yaml down -v
+#
+# Ryuk is disabled because the daemon does not implement the reaper API
+# (docs/compatibility.md). Clean up per-test with testcontainers.CleanupContainer
+# or t.Cleanup. TESTCONTAINERS_HOST_OVERRIDE is needed because published ports
+# answer on the host's non-loopback addresses, not on 127.0.0.1
+# (docs/operations.md#published-ports-do-not-answer-on-127001).
+
+name: dockerdless-ci
+
+services:
+  dockerdless:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: dockerdless:ci
+
+    network_mode: host
+    pid: host
+    privileged: true
+    restart: "no"
+
+    environment:
+      DOCKERDLESS_SOCKET_PATH: /run/dockerdless/dockerdless.sock
+      DOCKERDLESS_LOG_LEVEL: debug
+      # In-container paths, fixed to match the mount targets below. Override the
+      # host side via the interpolation on the volume sources, not here.
+      DOCKERDLESS_CONTAINERD_SOCKET: /run/containerd/containerd.sock
+      DOCKERDLESS_BUILDKIT_SOCKET: /run/buildkit/buildkitd.sock
+
+    volumes:
+      # Host backend sockets, overridable for CI images that relocate them.
+      - ${CONTAINERD_SOCKET:-/run/containerd/containerd.sock}:/run/containerd/containerd.sock
+      - ${BUILDKIT_SOCKET:-/run/buildkit/buildkitd.sock}:/run/buildkit/buildkitd.sock
+      # CNI config (read-write) and plugins (read-only), plus shared IPAM state.
+      - /etc/cni/net.d:/etc/cni/net.d
+      - /opt/cni/bin:/opt/cni/bin:ro
+      - /var/lib/cni:/var/lib/cni
+      # Stable workspace path for the socket the host test runner points at.
+      - ./run:/run/dockerdless
+
+    # Fast readiness gate for `up -d --wait`. /_ping needs no backend. The
+    # doubled $$ keeps Compose from interpolating the variable at config time
+    # and hands a literal $DOCKERDLESS_SOCKET_PATH to the container shell.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --unix-socket \"$$DOCKERDLESS_SOCKET_PATH\" http://localhost/_ping || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s

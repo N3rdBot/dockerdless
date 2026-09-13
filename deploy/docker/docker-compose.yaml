@@ -1,0 +1,103 @@
+# dockerdless container deployment.
+#
+# NOT the recommended production path. For a persistent daemon on a real host,
+# use the systemd layout in deploy/systemd/ instead: it runs the daemon directly
+# in the host namespaces it already needs and avoids the container coupling
+# below. Use this Compose file for CI, evaluation, or a disposable host. The
+# full rationale is in deploy/docker/README.md.
+#
+# The daemon is a HOST-LEVEL control plane. It starts containers through the
+# host's containerd, so this service must share the host's namespaces and see
+# the host's CNI state. The container pins the binary; it is NOT a sandbox.
+#
+#   docker compose -f deploy/docker/docker-compose.yaml up -d --build
+#   docker compose -f deploy/docker/docker-compose.yaml exec dockerdless \
+#     curl -fsS --unix-socket "$DOCKERDLESS_SOCKET_PATH" http://localhost/_ping
+#   docker compose -f deploy/docker/docker-compose.yaml down
+
+name: dockerdless
+
+services:
+  dockerdless:
+    build:
+      # Build context is the repository root (two levels up from this file).
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: dockerdless:local
+
+    # Host network namespace. CNI's bridge/host-local/portmap plugins create
+    # veth pairs, Linux bridges, and iptables NAT/FORWARD rules for published
+    # ports. Those objects must live in the host netns to route host traffic;
+    # in a private netns they would be invisible to the host and published
+    # ports would silently never work. The daemon's own API is a Unix socket,
+    # so sharing the netns does not expose a TCP port.
+    network_mode: host
+
+    # Host PID namespace. containerd reports task PIDs as HOST PIDs, and the
+    # daemon joins each task's network namespace through /proc/<pid>/ns/net
+    # (see cmd/dockerdless/main.go taskLocator and internal/adapters/cni). In a
+    # private PID namespace those host PIDs are not visible, the netns join
+    # fails, and container networking never comes up.
+    pid: host
+
+    # Privileged. The daemon creates network namespaces and veth pairs, moves
+    # interfaces into them, writes iptables rules, and opens /proc/<pid>/ns/net.
+    # That needs CAP_SYS_ADMIN and CAP_NET_ADMIN plus an unconfined
+    # device/seccomp profile; `privileged: true` grants all of it. A narrower
+    # `cap_add: [SYS_ADMIN, NET_ADMIN]` is untested here and can still be
+    # defeated by seccomp/AppArmor, so privileged is the supported baseline for
+    # this host-coupled mode.
+    privileged: true
+
+    # A crash-loop backoff is fine: startup is idempotent (socket gate in
+    # internal/api/server.go, startup reconciliation in main.go).
+    restart: unless-stopped
+
+    environment:
+      # Socket and its sibling dockerdless-logs/ directory inside the
+      # container. The parent is bind-mounted from the host below so the host
+      # and its clients can open the exact same socket inode. It must be
+      # absolute (internal/config/config.go).
+      DOCKERDLESS_SOCKET_PATH: /run/dockerdless/dockerdless.sock
+      DOCKERDLESS_LOG_LEVEL: info
+      # Optional YAML config. Only log-level is hot-reloadable; every other
+      # setting is startup-only and logs "configuration change requires
+      # restart" on edit (cmd/dockerdless/reload.go). Uncomment and mount a
+      # config file to use it.
+      # DOCKERDLESS_CONFIG_FILE: /etc/dockerdless/config.yaml
+
+    volumes:
+      # --- backend sockets (read-write: bidirectional gRPC) ------------------
+      # containerd is the runtime for every container the daemon starts.
+      # NOTE: binding the socket FILE means a containerd restart replaces the
+      # inode and this mount goes stale; recreate the container after a backend
+      # restart, or bind the parent directory /run/containerd:/run/containerd.
+      - /run/containerd/containerd.sock:/run/containerd/containerd.sock
+      # BuildKit is the image builder for `docker build` requests (same
+      # socket-inode caveat as containerd).
+      - /run/buildkit/buildkitd.sock:/run/buildkit/buildkitd.sock
+
+      # --- CNI state ---------------------------------------------------------
+      # The daemon writes and reads network conflists here, so this is
+      # read-write (internal/adapters/cni/adapter.go).
+      - /etc/cni/net.d:/etc/cni/net.d
+      # Plugin executables (bridge, host-local, portmap, firewall, loopback).
+      # Read-only is enough: the daemon only executes them.
+      - /opt/cni/bin:/opt/cni/bin:ro
+      # host-local IPAM allocations (default /var/lib/cni/networks) and
+      # libcni's result cache live under /var/lib/cni. Sharing this with the
+      # host keeps IP/port allocations consistent across daemon restarts and
+      # with any other CNI user on the host.
+      - /var/lib/cni:/var/lib/cni
+
+      # --- daemon runtime dir (socket + dockerdless-logs/) -------------------
+      # Bind-mounted (not a named volume) so the host and its clients can open
+      # the socket the daemon creates. Replace ./run with an absolute host path
+      # or a named volume if only in-container access is needed. The socket is
+      # created 0660 root:root, so host clients must run as root or the daemon
+      # uid's group.
+      - ./run:/run/dockerdless
+
+    # No `ports:` section on purpose: the API is a Unix socket, and with host
+    # networking a port mapping would be meaningless. Health is checked by the
+    # image HEALTHCHECK, which curls /_ping over the socket.
