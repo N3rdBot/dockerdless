@@ -427,8 +427,8 @@ func TestRemoveIsIdempotentForMissingContainer(t *testing.T) {
 	if err := adapter.Remove(context.Background(), domain.ContainerID("missing")); err != nil {
 		t.Fatalf("Remove missing container: %v", err)
 	}
-	if got := fake.snapshotRemovals(); !slices.Equal(got, []string{"missing"}) {
-		t.Fatalf("snapshot removals = %v, want [missing]", got)
+	if got := fake.snapshotRemovals(); len(got) != 0 {
+		t.Fatalf("snapshot removals = %v, want none (the snapshotter is unknowable without the container record)", got)
 	}
 }
 

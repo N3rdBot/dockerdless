@@ -354,8 +354,14 @@ func (a *Adapter) Remove(ctx context.Context, id domain.ContainerID) error {
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		// The container record is the only place the per-container snapshotter
+		// name is stored, so once it is gone the snapshotter is unknowable.
+		// Guessing one here (resolving the empty name) risks removing from the
+		// wrong snapshotter, so a missing container is treated as already
+		// removed; an orphaned snapshot left by an interrupted removal is
+		// reaped by the external sweep.
 		a.releaseStdin(id)
-		return a.removeSnapshot(ctx, a.snapshotter, string(id))
+		return nil
 	}
 	task, err := container.Task(ctx)
 	if err == nil {
