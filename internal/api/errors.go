@@ -23,8 +23,6 @@ const (
 	ErrorKindInvalidParameter ErrorKind = "InvalidParameter"
 	// ErrorKindNotImplemented is returned for recognized, unsupported endpoints.
 	ErrorKindNotImplemented ErrorKind = "NotImplemented"
-	// ErrorKindUnavailable is returned when a bounded resource is exhausted.
-	ErrorKindUnavailable ErrorKind = "Unavailable"
 	// ErrorKindServer is returned for unexpected server failures.
 	ErrorKindServer ErrorKind = "ServerError"
 )
@@ -93,11 +91,6 @@ func NewInvalidParameter(message string) *DockerError {
 // NewNotImplemented creates a 501 Docker error.
 func NewNotImplemented(message string) *DockerError {
 	return newDockerError(http.StatusNotImplemented, ErrorKindNotImplemented, message, "operation not implemented")
-}
-
-// NewUnavailable creates a 503 Docker error for exhausted bounded resources.
-func NewUnavailable(message string) *DockerError {
-	return newDockerError(http.StatusServiceUnavailable, ErrorKindUnavailable, message, "service unavailable")
 }
 
 // NewServerError creates a 500 Docker error.

@@ -53,13 +53,6 @@ type Adapter struct {
 // Option customizes the adapter.
 type Option func(*Adapter)
 
-// WithSnapshotter pins the containerd snapshotter used for new containers.
-func WithSnapshotter(name string) Option {
-	return func(a *Adapter) {
-		a.snapshotter = name
-	}
-}
-
 // WithNamespace pins the containerd namespace used for runtime operations.
 func WithNamespace(name string) Option {
 	return func(a *Adapter) {

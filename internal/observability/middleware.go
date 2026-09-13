@@ -45,7 +45,6 @@ func Middleware(logger *zap.Logger) func(http.Handler) http.Handler {
 			writer.Header().Set(RequestIDHeader, requestID)
 
 			ctx = ContextWithRequestID(ctx, requestID)
-			ctx = ContextWithLogger(ctx, logger.With(zap.String("request_id", requestID)))
 
 			ctx, span := otel.Tracer(instrumentationScope).Start(ctx,
 				request.Method+" "+request.URL.Path,

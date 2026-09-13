@@ -129,8 +129,3 @@ func (s *Store) Close() error {
 	})
 	return s.closeErr
 }
-
-// Stop is an alias for Close for callers that use lifecycle terminology.
-func (s *Store) Stop() error {
-	return s.Close()
-}

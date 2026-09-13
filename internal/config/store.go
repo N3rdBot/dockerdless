@@ -34,7 +34,6 @@ type Store struct {
 	initErr      error
 	configFile   string
 	errorHandler ErrorHandler
-	errorCh      chan error
 	closed       bool
 
 	watcher          *fsnotify.Watcher
@@ -51,7 +50,6 @@ func NewStore() *Store {
 	store := &Store{
 		v:       v,
 		initErr: err,
-		errorCh: make(chan error, 16),
 	}
 	store.current.Store(&cfg)
 	return store
@@ -98,13 +96,6 @@ func (s *Store) SetErrorHandler(handler ErrorHandler) {
 	s.errorHandler = handler
 }
 
-// Errors returns a best-effort stream of asynchronous reload errors.
-func (s *Store) Errors() <-chan error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.errorCh
-}
-
 // Load reads the configured file, decodes a complete Config, validates it, and
 // publishes it atomically. A failed load leaves the previous snapshot untouched.
 func (s *Store) Load() error {
@@ -146,10 +137,6 @@ func (s *Store) reportError(err error) {
 		return
 	}
 	handler := s.errorHandler
-	select {
-	case s.errorCh <- err:
-	default:
-	}
 	s.mu.Unlock()
 
 	if handler != nil {

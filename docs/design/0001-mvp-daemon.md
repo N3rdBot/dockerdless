@@ -360,8 +360,8 @@ wire body is exactly `{"message":"..."}` and nothing else
 application/json` and writes the mapped status. `mapServiceError` strips the
 `dockerdless: <kind>:` sentinel prefix through `cleanServiceMessage`, and an
 error may carry a Docker-facing message through the `DockerMessage()` interface
-(`app.dockerError`). A `503` constructor, `NewUnavailable`, exists for exhausted
-bounded resources, but no `ports` sentinel currently produces it.
+(`app.dockerError`). No canonical error currently maps to `503 Service
+Unavailable`: no `ports` sentinel produces one.
 
 ## Concurrency and lifecycle
 

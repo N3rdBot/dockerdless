@@ -206,11 +206,3 @@ func NewImageID(value string) (ImageID, error) {
 	}
 	return ImageID(value), nil
 }
-
-// NewNetworkID validates and constructs a network identity.
-func NewNetworkID(value string) (NetworkID, error) {
-	if strings.TrimSpace(value) == "" {
-		return "", ErrEmptyIdentity
-	}
-	return NetworkID(value), nil
-}

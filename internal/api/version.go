@@ -83,11 +83,6 @@ func (m VersionMiddleware) Wrap(next http.Handler) http.Handler {
 	})
 }
 
-// Middleware is an alias for Wrap for callers that prefer middleware naming.
-func (m VersionMiddleware) Middleware(next http.Handler) http.Handler {
-	return m.Wrap(next)
-}
-
 func versionFromPath(path string) (string, bool, error) {
 	if !strings.HasPrefix(path, "/v") {
 		return "", false, nil

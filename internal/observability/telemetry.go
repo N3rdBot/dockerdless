@@ -20,7 +20,6 @@ import (
 
 // Telemetry owns the process-wide OpenTelemetry providers.
 type Telemetry struct {
-	serviceName    string
 	tracerProvider *sdktrace.TracerProvider
 	meterProvider  *sdkmetric.MeterProvider
 	loggerProvider *sdklog.LoggerProvider
@@ -120,20 +119,11 @@ func BootstrapTelemetry(serviceName string, opts ...TelemetryOption) (*Telemetry
 	}
 
 	return &Telemetry{
-		serviceName:    serviceName,
 		tracerProvider: tracerProvider,
 		meterProvider:  meterProvider,
 		loggerProvider: loggerProvider,
 		otlpEnabled:    target != "",
 	}, nil
-}
-
-// ServiceName returns the service name used for telemetry.
-func (t *Telemetry) ServiceName() string {
-	if t == nil {
-		return ""
-	}
-	return t.serviceName
 }
 
 // OTLPEnabled reports whether OTLP exporters were wired during bootstrap.

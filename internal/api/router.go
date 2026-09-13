@@ -53,17 +53,6 @@ func NewRouterWithRouteMatrix(matrix RouteMatrix) http.Handler {
 	return otelhttp.NewHandler(versioned, "dockerdless-api")
 }
 
-// RegisterDockerRoutes registers the currently supported unversioned routes
-// on a standard library ServeMux for backwards-compatible callers.
-func RegisterDockerRoutes(mux *http.ServeMux) {
-	if mux == nil {
-		return
-	}
-
-	mux.HandleFunc("/_ping", pingHandler)
-	mux.HandleFunc("/version", versionHandler)
-}
-
 type dockerRouter struct {
 	routes []compiledRoute
 }

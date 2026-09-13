@@ -80,14 +80,6 @@ func NewServer(socketPath string, handler http.Handler, options ...ServerOption)
 	return server, nil
 }
 
-// Handler returns the HTTP handler registered with the server boundary.
-func (s *Server) Handler() http.Handler {
-	if s == nil {
-		return nil
-	}
-	return s.handler
-}
-
 // SocketPath returns the configured Unix socket path.
 func (s *Server) SocketPath() string {
 	if s == nil {
@@ -146,15 +138,6 @@ func (s *Server) listen(ctx context.Context) (net.Listener, error) {
 		IdleTimeout:       serverIdleWait,
 	}
 	return listener, nil
-}
-
-// ServeHTTP lets the server double as an http.Handler.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if s == nil || s.handler == nil {
-		http.NotFound(w, r)
-		return
-	}
-	s.handler.ServeHTTP(w, r)
 }
 
 // Run serves HTTP until ctx is canceled, then shuts down gracefully with the

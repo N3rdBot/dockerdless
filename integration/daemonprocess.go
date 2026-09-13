@@ -181,10 +181,6 @@ func (d *daemonProcess) SocketPath() string { return d.socketPath }
 // CNIConfigDir returns the ephemeral CNI configuration directory.
 func (d *daemonProcess) CNIConfigDir() string { return d.cniConfigDir }
 
-// NamePrefix is the unique prefix every container created for this test
-// binary must use so the leftover sweep can identify its own resources.
-func (d *daemonProcess) NamePrefix() string { return d.namePrefix }
-
 // Logs returns everything the daemon wrote to stdout/stderr so far.
 func (d *daemonProcess) Logs() string { return d.logs.String() }
 
