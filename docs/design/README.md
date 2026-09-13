@@ -7,8 +7,15 @@ concurrency, tests, and the milestone sequence.
 
 Start from [`0000-template.md`](0000-template.md). Copy it, never edit it.
 
+## Index
+
+| Design | Status | Summary |
+| --- | --- | --- |
+| [`0001-mvp-daemon.md`](0001-mvp-daemon.md) | Implemented | The Linux-rootful MVP: a Docker Engine API daemon over containerd runtime, BuildKit images, and CNI networking. |
+
 ## Table of contents
 
+- [Index](#index)
 - [How a design relates to a proposal](#how-a-design-relates-to-a-proposal)
 - [When to split a proposal into a design doc](#when-to-split-a-proposal-into-a-design-doc)
 - [When a design doc is not needed](#when-a-design-doc-is-not-needed)
