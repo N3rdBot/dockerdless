@@ -9,12 +9,19 @@ Start from [`0000-template.md`](0000-template.md). Copy it, never edit it.
 
 ## Table of contents
 
+- [Index](#index)
 - [When a proposal is required](#when-a-proposal-is-required)
 - [When a proposal is not required](#when-a-proposal-is-not-required)
 - [Numbering](#numbering)
 - [Lifecycle and status transitions](#lifecycle-and-status-transitions)
 - [Proposal, design, and ADR: how they relate](#proposal-design-and-adr-how-they-relate)
 - [Review and approval](#review-and-approval)
+
+## Index
+
+| Proposal | Title | Status | Date | Summary |
+| --- | --- | --- | --- | --- |
+| [0001](0001-docker-api-daemon-over-containerd.md) | A Docker Engine API daemon over containerd | Implemented | 2026-09-13 | Serve the Docker API subset testcontainers-go needs over native containerd, BuildKit, and CNI, with every served route and create field explicitly classified and verified live. |
 
 ## When a proposal is required
 
