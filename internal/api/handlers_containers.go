@@ -230,52 +230,83 @@ func requestedMounts(hostConfig *container.HostConfig) []ports.Mount {
 	}
 	mounts := make([]ports.Mount, 0, len(hostConfig.Binds)+len(hostConfig.Mounts))
 	for _, bind := range hostConfig.Binds {
-		parts := strings.Split(bind, ":")
-		if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-			continue
+		if translated, ok := translateBindMount(bind); ok {
+			mounts = append(mounts, translated)
 		}
-		mount := ports.Mount{Type: "bind", Source: parts[0], Destination: parts[1]}
-		if len(parts) >= 3 {
-			for option := range strings.SplitSeq(parts[2], ",") {
-				switch strings.ToLower(strings.TrimSpace(option)) {
-				case "ro":
-					mount.ReadOnly = true
-				case "":
-				default:
-					mount.Options = append(mount.Options, option)
-				}
-			}
-		}
-		mounts = append(mounts, mount)
 	}
 	for _, requested := range hostConfig.Mounts {
-		mountType := string(requested.Type)
-		if mountType == "" {
-			mountType = string(mount.TypeBind)
-		}
-		translated := ports.Mount{Type: mountType, Source: requested.Source, Destination: requested.Target, ReadOnly: requested.ReadOnly}
-		if requested.BindOptions != nil && requested.BindOptions.Propagation != "" {
-			translated.Options = append(translated.Options, string(requested.BindOptions.Propagation))
-		}
-		if requested.TmpfsOptions != nil {
-			if requested.TmpfsOptions.SizeBytes > 0 {
-				translated.Options = append(translated.Options, fmt.Sprintf("size=%d", requested.TmpfsOptions.SizeBytes))
-			}
-			if requested.TmpfsOptions.Mode != 0 {
-				translated.Options = append(translated.Options, fmt.Sprintf("mode=%o", requested.TmpfsOptions.Mode))
-			}
-			for _, option := range requested.TmpfsOptions.Options {
-				switch len(option) {
-				case 1:
-					translated.Options = append(translated.Options, option[0])
-				case 2:
-					translated.Options = append(translated.Options, option[0]+"="+option[1])
-				}
-			}
-		}
-		mounts = append(mounts, translated)
+		mounts = append(mounts, translateStructuredMount(requested))
 	}
 	return mounts
+}
+
+// translateBindMount converts one legacy Binds entry, reporting false when the
+// entry is malformed and must be skipped.
+func translateBindMount(bind string) (ports.Mount, bool) {
+	parts := strings.Split(bind, ":")
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return ports.Mount{}, false
+	}
+	translated := ports.Mount{Type: "bind", Source: parts[0], Destination: parts[1]}
+	if len(parts) >= 3 {
+		applyBindOptions(&translated, parts[2])
+	}
+	return translated, true
+}
+
+// applyBindOptions maps comma-separated legacy bind options onto the translated
+// mount: "ro" sets ReadOnly and unknown non-empty options are kept verbatim.
+func applyBindOptions(translated *ports.Mount, options string) {
+	for option := range strings.SplitSeq(options, ",") {
+		switch strings.ToLower(strings.TrimSpace(option)) {
+		case "ro":
+			translated.ReadOnly = true
+		case "":
+		default:
+			translated.Options = append(translated.Options, option)
+		}
+	}
+}
+
+// translateStructuredMount converts one HostConfig.Mounts entry.
+func translateStructuredMount(requested mount.Mount) ports.Mount {
+	mountType := string(requested.Type)
+	if mountType == "" {
+		mountType = string(mount.TypeBind)
+	}
+	translated := ports.Mount{
+		Type:        mountType,
+		Source:      requested.Source,
+		Destination: requested.Target,
+		ReadOnly:    requested.ReadOnly,
+	}
+	if requested.BindOptions != nil && requested.BindOptions.Propagation != "" {
+		translated.Options = append(translated.Options, string(requested.BindOptions.Propagation))
+	}
+	applyTmpfsOptions(&translated, requested.TmpfsOptions)
+	return translated
+}
+
+// applyTmpfsOptions appends size, mode, and free-form tmpfs options in that
+// order.
+func applyTmpfsOptions(translated *ports.Mount, options *mount.TmpfsOptions) {
+	if options == nil {
+		return
+	}
+	if options.SizeBytes > 0 {
+		translated.Options = append(translated.Options, fmt.Sprintf("size=%d", options.SizeBytes))
+	}
+	if options.Mode != 0 {
+		translated.Options = append(translated.Options, fmt.Sprintf("mode=%o", options.Mode))
+	}
+	for _, option := range options.Options {
+		switch len(option) {
+		case 1:
+			translated.Options = append(translated.Options, option[0])
+		case 2:
+			translated.Options = append(translated.Options, option[0]+"="+option[1])
+		}
+	}
 }
 
 func containerInspectResponse(item domain.Container) container.InspectResponse {

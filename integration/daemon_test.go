@@ -47,11 +47,32 @@ func TestDaemonContainerLifecycle(t *testing.T) {
 
 	const readyMarker = "dls-lifecycle-ready"
 	name := uniqueName(t, "lifecycle")
+	containerID := createLifecycleContainer(ctx, t, api, daemon, reference, name, readyMarker)
+
+	startLifecycleContainer(ctx, t, api, daemon, containerID)
+	assertLifecycleInspect(ctx, t, api, containerID, name, reference)
+
+	stdout, stderr := readContainerLogs(ctx, t, api, containerID, readyMarker)
+	if !strings.Contains(stdout, readyMarker) {
+		t.Fatalf("logs stdout = %q, want marker %q (stderr %q)", stdout, readyMarker, stderr)
+	}
+	t.Logf("logs: stdout=%q stderr=%q", strings.TrimSpace(stdout), strings.TrimSpace(stderr))
+
+	execID := runExec(t, api, containerID)
+	t.Logf("exec %s finished with exit code 7", execID)
+
+	stopAndRemoveLifecycleContainer(ctx, t, api, daemon, containerID)
+}
+
+// createLifecycleContainer creates the long-running fixture container and
+// registers its forced removal.
+func createLifecycleContainer(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, reference, name, marker string) string {
+	t.Helper()
 	created, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: name,
 		Config: &container.Config{
 			Image:        reference,
-			Cmd:          []string{"sh", "-c", "echo " + readyMarker + "; sleep 120"},
+			Cmd:          []string{"sh", "-c", "echo " + marker + "; sleep 120"},
 			AttachStdout: true,
 			AttachStderr: true,
 		},
@@ -69,12 +90,23 @@ func TestDaemonContainerLifecycle(t *testing.T) {
 		return nil
 	})
 	t.Logf("created container %s (%s)", name, containerID)
+	return containerID
+}
 
+// startLifecycleContainer starts the container and waits for it to report
+// running.
+func startLifecycleContainer(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, containerID string) {
+	t.Helper()
 	if _, err := api.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("ContainerStart(%s): %v\n--- daemon logs ---\n%s", containerID, err, daemon.Logs())
 	}
-	waitForContainerState(t, api, containerID, true)
+	waitForContainerState(ctx, t, api, containerID, true)
+}
 
+// assertLifecycleInspect pins the running container's name, config, state, and
+// bridge attachment.
+func assertLifecycleInspect(ctx context.Context, t *testing.T, api *client.Client, containerID, name, reference string) {
+	t.Helper()
 	inspect, err := api.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatalf("ContainerInspect(%s): %v", containerID, err)
@@ -99,22 +131,18 @@ func TestDaemonContainerLifecycle(t *testing.T) {
 		t.Fatalf("bridge endpoint IP = %q, want a concrete address", bridge.IPAddress)
 	}
 	t.Logf("inspect: name=%s image=%s state=%s bridge_ip=%s", inspect.Container.Name, inspect.Container.Image, inspect.Container.State.Status, bridge.IPAddress)
+}
 
-	stdout, stderr := readContainerLogs(t, api, containerID, readyMarker)
-	if !strings.Contains(stdout, readyMarker) {
-		t.Fatalf("logs stdout = %q, want marker %q (stderr %q)", stdout, readyMarker, stderr)
-	}
-	t.Logf("logs: stdout=%q stderr=%q", strings.TrimSpace(stdout), strings.TrimSpace(stderr))
-
-	execID := runExec(t, api, containerID)
-	t.Logf("exec %s finished with exit code 7", execID)
-
+// stopAndRemoveLifecycleContainer stops the container, waits for the stopped
+// state, force-removes it, and asserts the record is gone.
+func stopAndRemoveLifecycleContainer(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, containerID string) {
+	t.Helper()
 	stopTimeout := 5
 	started := time.Now()
 	if _, err := api.ContainerStop(ctx, containerID, client.ContainerStopOptions{Timeout: &stopTimeout}); err != nil {
 		t.Fatalf("ContainerStop(%s): %v\n--- daemon logs ---\n%s", containerID, err, daemon.Logs())
 	}
-	waitForContainerState(t, api, containerID, false)
+	waitForContainerState(ctx, t, api, containerID, false)
 	stopped, err := api.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatalf("ContainerInspect after stop: %v", err)
@@ -132,13 +160,13 @@ func TestDaemonContainerLifecycle(t *testing.T) {
 
 // waitForContainerState polls inspect until the container reaches the wanted
 // running state or the deadline expires.
-func waitForContainerState(t *testing.T, api *client.Client, containerID string, wantRunning bool) {
+func waitForContainerState(ctx context.Context, t *testing.T, api *client.Client, containerID string, wantRunning bool) {
 	t.Helper()
 	deadline := time.Now().Add(containerStateTimeout)
 	var last *container.State
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		inspect, err := api.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+		inspect, err := api.ContainerInspect(probe, containerID, client.ContainerInspectOptions{})
 		cancel()
 		if err != nil {
 			t.Fatalf("ContainerInspect(%s) while waiting: %v", containerID, err)
@@ -203,13 +231,13 @@ func runExec(t *testing.T, api *client.Client, containerID string) string {
 
 // readContainerLogs polls the container logs until the wanted marker appears
 // and returns the demultiplexed stdout and stderr streams.
-func readContainerLogs(t *testing.T, api *client.Client, containerID, marker string) (string, string) {
+func readContainerLogs(ctx context.Context, t *testing.T, api *client.Client, containerID, marker string) (string, string) {
 	t.Helper()
 	deadline := time.Now().Add(logMarkerTimeout)
 	var stdout, stderr string
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		stream, err := api.ContainerLogs(ctx, containerID, client.ContainerLogsOptions{
+		child, cancel := context.WithTimeout(ctx, 10*time.Second)
+		stream, err := api.ContainerLogs(child, containerID, client.ContainerLogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 		})

@@ -84,26 +84,15 @@ func (e *BuildError) StatusCode() int {
 func (a *Adapter) Build(ctx context.Context, request BuildRequest, out io.Writer) error {
 	progress := NewProgressWriter(out)
 
-	if a.solver == nil {
-		message := "build is not available: BuildKit solver is not configured"
-		return a.failBuild(progress, http.StatusNotImplemented, message, ErrNoSolver)
-	}
-	if request.Context == nil {
-		return a.failBuild(progress, http.StatusBadRequest, "build context is required", ErrInvalidContext)
-	}
-
-	contextDir, err := a.materializeContext(request.Context, request.Dockerfile)
+	contextDir, err := a.prepareBuildContext(progress, request)
 	if err != nil {
-		return a.failBuild(progress, http.StatusBadRequest, err.Error(), err)
+		return err
 	}
 	defer a.cleanupContext(contextDir)
 
-	tag := ""
-	if strings.TrimSpace(request.Tag) != "" {
-		tag, err = NormalizeReference(request.Tag)
-		if err != nil {
-			return a.failBuild(progress, http.StatusBadRequest, err.Error(), err)
-		}
+	tag, err := a.resolveBuildTag(progress, request.Tag)
+	if err != nil {
+		return err
 	}
 
 	solveOptions := SolveOptions{
@@ -117,6 +106,42 @@ func (a *Adapter) Build(ctx context.Context, request BuildRequest, out io.Writer
 		Auth:       request.Auth,
 	}
 
+	return a.solveBuild(ctx, progress, solveOptions, tag)
+}
+
+// prepareBuildContext validates the build prerequisites and materializes the
+// request tar into a temporary directory.
+func (a *Adapter) prepareBuildContext(progress *ProgressWriter, request BuildRequest) (string, error) {
+	if a.solver == nil {
+		message := "build is not available: BuildKit solver is not configured"
+		return "", a.failBuild(progress, http.StatusNotImplemented, message, ErrNoSolver)
+	}
+	if request.Context == nil {
+		return "", a.failBuild(progress, http.StatusBadRequest, "build context is required", ErrInvalidContext)
+	}
+	contextDir, err := a.materializeContext(request.Context, request.Dockerfile)
+	if err != nil {
+		return "", a.failBuild(progress, http.StatusBadRequest, err.Error(), err)
+	}
+	return contextDir, nil
+}
+
+// resolveBuildTag normalizes an optional image reference, reporting malformed
+// references as bad requests on the progress stream.
+func (a *Adapter) resolveBuildTag(progress *ProgressWriter, reference string) (string, error) {
+	if strings.TrimSpace(reference) == "" {
+		return "", nil
+	}
+	tag, err := NormalizeReference(reference)
+	if err != nil {
+		return "", a.failBuild(progress, http.StatusBadRequest, err.Error(), err)
+	}
+	return tag, nil
+}
+
+// solveBuild runs the solver while translating its status stream, then reports
+// either the failure or the successful build result.
+func (a *Adapter) solveBuild(ctx context.Context, progress *ProgressWriter, solveOptions SolveOptions, tag string) error {
 	statusCh := make(chan *buildkitclient.SolveStatus, 32)
 	translate := newBuildProgress(progress)
 	var translateErr error
@@ -136,14 +161,24 @@ func (a *Adapter) Build(ctx context.Context, request BuildRequest, out io.Writer
 		solveErr = translateErr
 	}
 	if solveErr != nil {
-		message := solveErr.Error()
-		if !translate.EmittedError() {
-			_ = progress.ErrorDetail(errorDetailCode, message)
-		}
-		a.logger.Warn("image build failed", zap.String("reference", tag), zap.Error(solveErr))
-		return &BuildError{Status: http.StatusInternalServerError, Message: message, Err: solveErr}
+		return a.solveFailed(progress, translate, tag, solveErr)
 	}
+	return a.emitBuildResult(progress, tag, result)
+}
 
+// solveFailed emits the final errorDetail unless the translator already did and
+// reports the failed build to the caller and the log.
+func (a *Adapter) solveFailed(progress *ProgressWriter, translate *buildProgress, tag string, solveErr error) error {
+	message := solveErr.Error()
+	if !translate.EmittedError() {
+		_ = progress.ErrorDetail(errorDetailCode, message)
+	}
+	a.logger.Warn("image build failed", zap.String("reference", tag), zap.Error(solveErr))
+	return &BuildError{Status: http.StatusInternalServerError, Message: message, Err: solveErr}
+}
+
+// emitBuildResult writes the aux image ID and the success stream lines.
+func (a *Adapter) emitBuildResult(progress *ProgressWriter, tag string, result SolveResult) error {
 	imageID := result.ImageID
 	if imageID == "" {
 		imageID = result.Digest
@@ -226,44 +261,54 @@ func extractTarContext(reader io.Reader, root string) error {
 		if err != nil {
 			return fmt.Errorf("%w: read tar stream: %w", ErrInvalidContext, err)
 		}
-
-		name, err := safeTarPath(header.Name)
-		if err != nil {
+		if err := extractTarEntry(dir, header, tarReader); err != nil {
 			return err
 		}
-		if name == "." {
-			continue
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := dir.MkdirAll(name, directoryMode(header)); err != nil {
-				return fmt.Errorf("%w: create directory %q: %w", ErrInvalidContext, name, err)
-			}
-		case tar.TypeReg:
-			if err := writeTarFile(dir, name, header, tarReader); err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			if err := createTarSymlink(dir, name, header.Linkname); err != nil {
-				return err
-			}
-		case tar.TypeLink:
-			link, err := safeTarPath(header.Linkname)
-			if err != nil {
-				return err
-			}
-			if err := ensureParent(dir, name); err != nil {
-				return err
-			}
-			if err := dir.Link(link, name); err != nil {
-				return fmt.Errorf("%w: link %q to %q: %w", ErrInvalidContext, name, link, err)
-			}
-		default:
-			// Character/block devices and FIFOs have no meaning in a build
-			// context; skip them rather than fail the whole request.
-		}
 	}
+}
+
+// extractTarEntry unpacks a single tar entry according to its type. Entry types
+// without meaning in a build context are skipped rather than failing the request.
+func extractTarEntry(dir *os.Root, header *tar.Header, reader io.Reader) error {
+	name, err := safeTarPath(header.Name)
+	if err != nil {
+		return err
+	}
+	if name == "." {
+		return nil
+	}
+
+	switch header.Typeflag {
+	case tar.TypeDir:
+		if err := dir.MkdirAll(name, directoryMode(header)); err != nil {
+			return fmt.Errorf("%w: create directory %q: %w", ErrInvalidContext, name, err)
+		}
+	case tar.TypeReg:
+		return writeTarFile(dir, name, header, reader)
+	case tar.TypeSymlink:
+		return createTarSymlink(dir, name, header.Linkname)
+	case tar.TypeLink:
+		return extractTarHardlink(dir, name, header)
+	default:
+		// Character/block devices and FIFOs have no meaning in a build
+		// context; skip them rather than fail the whole request.
+	}
+	return nil
+}
+
+// extractTarHardlink validates the link target and creates a hard link entry.
+func extractTarHardlink(dir *os.Root, name string, header *tar.Header) error {
+	link, err := safeTarPath(header.Linkname)
+	if err != nil {
+		return err
+	}
+	if err := ensureParent(dir, name); err != nil {
+		return err
+	}
+	if err := dir.Link(link, name); err != nil {
+		return fmt.Errorf("%w: link %q to %q: %w", ErrInvalidContext, name, link, err)
+	}
+	return nil
 }
 
 func writeTarFile(dir *os.Root, name string, header *tar.Header, reader io.Reader) error {

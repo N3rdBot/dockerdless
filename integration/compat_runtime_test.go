@@ -222,6 +222,18 @@ func compatContainerLifecycle(t *testing.T, daemon *daemonProcess) {
 
 	const marker = "dls-tc-marker"
 	name := uniqueName(t, "tc")
+	container := compatStartLifecycleContainer(ctx, t, daemon, image, name, marker)
+
+	compatAssertNoReaper(ctx, t, daemon)
+	compatAssertContainerLogsMarker(ctx, t, container, marker)
+	compatAssertContainerRunning(ctx, t, container)
+	compatStopContainer(ctx, t, daemon, container)
+}
+
+// compatStartLifecycleContainer creates the no-exposed-ports container, waits
+// for its log marker, and returns it.
+func compatStartLifecycleContainer(ctx context.Context, t *testing.T, daemon *daemonProcess, image, name, marker string) testcontainers.Container {
+	t.Helper()
 	request := testcontainers.ContainerRequest{
 		Image: image,
 		Name:  name,
@@ -249,7 +261,13 @@ func compatContainerLifecycle(t *testing.T, daemon *daemonProcess) {
 		t.Fatal("testcontainers returned an empty container ID")
 	}
 	t.Logf("testcontainers container %s (%s) started in %s", name, containerID, time.Since(started).Round(time.Millisecond))
+	return container
+}
 
+// compatAssertNoReaper proves Ryuk is disabled by rejecting any reaper-shaped
+// container in the daemon's list.
+func compatAssertNoReaper(ctx context.Context, t *testing.T, daemon *daemonProcess) {
+	t.Helper()
 	listing, err := daemon.Client().ContainerList(ctx, client.ContainerListOptions{All: true})
 	if err != nil {
 		t.Fatalf("ContainerList while checking for a reaper: %v", err)
@@ -259,7 +277,12 @@ func compatContainerLifecycle(t *testing.T, daemon *daemonProcess) {
 			t.Fatalf("Ryuk reaper container present although Ryuk is disabled: %+v", item)
 		}
 	}
+}
 
+// compatAssertContainerLogsMarker pins the container logs against the startup
+// marker.
+func compatAssertContainerLogsMarker(ctx context.Context, t *testing.T, container testcontainers.Container, marker string) {
+	t.Helper()
 	logs, err := container.Logs(ctx)
 	if err != nil {
 		t.Fatalf("testcontainers Container.Logs: %v", err)
@@ -273,7 +296,11 @@ func compatContainerLifecycle(t *testing.T, daemon *daemonProcess) {
 		t.Fatalf("testcontainers logs = %q, want marker %q", string(content), marker)
 	}
 	t.Logf("testcontainers logs: %q", strings.TrimSpace(string(content)))
+}
 
+// compatAssertContainerRunning pins the library-reported running state.
+func compatAssertContainerRunning(ctx context.Context, t *testing.T, container testcontainers.Container) {
+	t.Helper()
 	state, err := container.State(ctx)
 	if err != nil {
 		t.Fatalf("testcontainers Container.State: %v", err)
@@ -281,13 +308,18 @@ func compatContainerLifecycle(t *testing.T, daemon *daemonProcess) {
 	if !state.Running {
 		t.Fatalf("testcontainers container state = %+v, want running", state)
 	}
+}
 
+// compatStopContainer stops the container and pins the library-reported
+// stopped state and timings.
+func compatStopContainer(ctx context.Context, t *testing.T, daemon *daemonProcess, container testcontainers.Container) {
+	t.Helper()
 	stopTimeout := 5 * time.Second
 	stoppedAt := time.Now()
 	if err := container.Stop(ctx, &stopTimeout); err != nil {
 		t.Fatalf("testcontainers Container.Stop: %v\n--- daemon logs ---\n%s", err, daemon.Logs())
 	}
-	state, err = container.State(ctx)
+	state, err := container.State(ctx)
 	if err != nil {
 		t.Fatalf("testcontainers Container.State after stop: %v", err)
 	}
@@ -295,7 +327,7 @@ func compatContainerLifecycle(t *testing.T, daemon *daemonProcess) {
 		t.Fatalf("testcontainers container still running after Stop: %+v", state)
 	}
 	t.Logf("testcontainers container %s stopped in %s: status=%s exit_code=%d",
-		containerID, time.Since(stoppedAt).Round(time.Millisecond), state.Status, state.ExitCode)
+		container.GetContainerID(), time.Since(stoppedAt).Round(time.Millisecond), state.Status, state.ExitCode)
 }
 
 func hasReaperName(names []string) bool {

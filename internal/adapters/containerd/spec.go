@@ -95,22 +95,38 @@ func buildSpec(ctx context.Context, cfg Config, image ocispec.Image, namespace s
 	if strings.TrimSpace(string(cfg.Image)) == "" {
 		return nil, fmt.Errorf("%w: image reference is required", ErrInvalidArgument)
 	}
+	args, userOpt, mounts, err := resolveSpecInputs(cfg, image)
+	if err != nil {
+		return nil, err
+	}
+	opts := buildSpecOpts(cfg, image, args, userOpt, mounts)
+	meta := &containers.Container{ID: cfg.ID, Image: string(cfg.Image)}
+	return oci.GenerateSpecWithPlatform(ctx, nil, runtime.GOOS+"/"+runtime.GOARCH, meta, opts...)
+}
+
+// resolveSpecInputs applies Docker's argument, user, and mount precedence.
+func resolveSpecInputs(cfg Config, image ocispec.Image) ([]string, oci.SpecOpts, []specs.Mount, error) {
 	args := resolveArgs(cfg.Entrypoint, cfg.Command, image.Config.Entrypoint, image.Config.Cmd)
 	if len(args) == 0 {
-		return nil, fmt.Errorf("%w: no command specified", ErrInvalidArgument)
+		return nil, nil, nil, fmt.Errorf("%w: no command specified", ErrInvalidArgument)
 	}
 	user, err := resolveUser(cfg.User, image.Config.User)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	userOpt, err := userSpecOpt(user)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	mounts, err := translateMounts(cfg.Mounts)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
+	return args, userOpt, mounts, nil
+}
+
+// buildSpecOpts assembles the OCI spec options from the resolved inputs.
+func buildSpecOpts(cfg Config, image ocispec.Image, args []string, userOpt oci.SpecOpts, mounts []specs.Mount) []oci.SpecOpts {
 	opts := []oci.SpecOpts{
 		oci.WithEnv(append([]string(nil), image.Config.Env...)),
 		oci.WithEnv(envSlice(cfg.Env)),
@@ -122,11 +138,7 @@ func buildSpec(ctx context.Context, cfg Config, image ocispec.Image, namespace s
 	if cwd := firstNonEmpty(cfg.WorkingDir, image.Config.WorkingDir); cwd != "" {
 		opts = append(opts, oci.WithProcessCwd(cwd))
 	}
-	hostname := cfg.Hostname
-	if hostname == "" {
-		hostname = shortHostname(cfg.ID)
-	}
-	if hostname != "" {
+	if hostname := containerHostname(cfg); hostname != "" {
 		opts = append(opts, oci.WithHostname(hostname))
 	}
 	if len(cfg.Labels) > 0 {
@@ -138,8 +150,16 @@ func buildSpec(ctx context.Context, cfg Config, image ocispec.Image, namespace s
 	if cfg.Terminal {
 		opts = append(opts, oci.WithTTY)
 	}
-	meta := &containers.Container{ID: cfg.ID, Image: string(cfg.Image)}
-	return oci.GenerateSpecWithPlatform(ctx, nil, runtime.GOOS+"/"+runtime.GOARCH, meta, opts...)
+	return opts
+}
+
+// containerHostname returns the configured hostname or Docker's ID-derived
+// default.
+func containerHostname(cfg Config) string {
+	if cfg.Hostname != "" {
+		return cfg.Hostname
+	}
+	return shortHostname(cfg.ID)
 }
 
 // resolveArgs implements Docker's argument precedence: an explicit entrypoint
@@ -236,41 +256,57 @@ func translateMounts(mounts []Mount) ([]specs.Mount, error) {
 	}
 	out := make([]specs.Mount, 0, len(mounts))
 	for _, mount := range mounts {
-		if !strings.HasPrefix(mount.Destination, "/") {
-			return nil, fmt.Errorf("%w: mount destination %q must be absolute", ErrInvalidArgument, mount.Destination)
+		translated, err := translateMount(mount)
+		if err != nil {
+			return nil, err
 		}
-		mountType := mount.Type
-		if mountType == "" {
-			mountType = "bind"
-		}
-		options := append([]string(nil), mount.Options...)
-		switch mountType {
-		case "bind":
-			if !slices.Contains(options, "rbind") && !slices.Contains(options, "bind") {
-				options = append(options, "rbind")
-			}
-		case "tmpfs":
-		default:
-		}
-		if mount.ReadOnly {
-			if !slices.Contains(options, "ro") {
-				options = append(options, "ro")
-			}
-		} else if mountType == "bind" && !slices.Contains(options, "rw") {
-			options = append(options, "rw")
-		}
-		source := mount.Source
-		if mountType == "tmpfs" && source == "" {
-			source = "tmpfs"
-		}
-		out = append(out, specs.Mount{
-			Destination: mount.Destination,
-			Type:        mountType,
-			Source:      source,
-			Options:     options,
-		})
+		out = append(out, translated)
 	}
 	return out, nil
+}
+
+// translateMount converts one Docker-style mount to an OCI mount.
+func translateMount(mount Mount) (specs.Mount, error) {
+	if !strings.HasPrefix(mount.Destination, "/") {
+		return specs.Mount{}, fmt.Errorf("%w: mount destination %q must be absolute", ErrInvalidArgument, mount.Destination)
+	}
+	mountType := mount.Type
+	if mountType == "" {
+		mountType = "bind"
+	}
+	source := mount.Source
+	if mountType == "tmpfs" && source == "" {
+		source = "tmpfs"
+	}
+	return specs.Mount{
+		Destination: mount.Destination,
+		Type:        mountType,
+		Source:      source,
+		Options:     mountOptions(mount, mountType),
+	}, nil
+}
+
+// mountOptions applies Docker's default bind propagation and access mode.
+func mountOptions(mount Mount, mountType string) []string {
+	options := append([]string(nil), mount.Options...)
+	if mountType == "bind" && !slices.Contains(options, "bind") {
+		options = appendIfMissing(options, "rbind")
+	}
+	if mount.ReadOnly {
+		return appendIfMissing(options, "ro")
+	}
+	if mountType == "bind" {
+		options = appendIfMissing(options, "rw")
+	}
+	return options
+}
+
+// appendIfMissing appends option unless it is already present.
+func appendIfMissing(options []string, option string) []string {
+	if slices.Contains(options, option) {
+		return options
+	}
+	return append(options, option)
 }
 
 // shortHostname mirrors Docker's default hostname (first 12 ID characters).

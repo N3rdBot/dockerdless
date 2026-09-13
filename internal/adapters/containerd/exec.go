@@ -62,26 +62,12 @@ type ExecResult struct {
 // exit code is data, not an error.
 func (a *Adapter) Exec(ctx context.Context, id domain.ContainerID, cfg ExecConfig) (ExecResult, error) {
 	ctx = a.namespaceContext(ctx)
-	if len(cfg.Command) == 0 {
-		return ExecResult{}, fmt.Errorf("%w: exec command is required", ErrInvalidArgument)
-	}
-	if cfg.ID != "" && !identityPattern.MatchString(cfg.ID) {
-		return ExecResult{}, fmt.Errorf("%w: invalid exec id %q", ErrInvalidArgument, cfg.ID)
-	}
-	container, err := a.loadContainer(ctx, id)
-	if err != nil {
+	if err := validateExecConfig(cfg); err != nil {
 		return ExecResult{}, err
 	}
-	task, err := container.Task(ctx)
+	container, task, err := a.runningTask(ctx, id)
 	if err != nil {
-		return ExecResult{}, mapError(err)
-	}
-	status, err := task.Status(ctx)
-	if err != nil {
-		return ExecResult{}, mapError(err)
-	}
-	if status.Status != containerdclient.Running {
-		return ExecResult{}, fmt.Errorf("container %s is not running: %w", id, ErrConflict)
+		return ExecResult{}, err
 	}
 	containerSpec, err := container.Spec(ctx)
 	if err != nil {
@@ -91,12 +77,9 @@ func (a *Adapter) Exec(ctx context.Context, id domain.ContainerID, cfg ExecConfi
 	if err != nil {
 		return ExecResult{}, err
 	}
-	execID := cfg.ID
-	if execID == "" {
-		execID, err = newID()
-		if err != nil {
-			return ExecResult{}, fmt.Errorf("generate exec id: %w", err)
-		}
+	execID, err := resolveExecID(cfg.ID)
+	if err != nil {
+		return ExecResult{}, err
 	}
 	process, err := task.Exec(ctx, execID, processSpec, TaskIO{
 		Stdin:    cfg.Stdin,
@@ -107,18 +90,71 @@ func (a *Adapter) Exec(ctx context.Context, id domain.ContainerID, cfg ExecConfi
 	if err != nil {
 		return ExecResult{}, mapError(err)
 	}
-	result := ExecResult{ID: execID, Detached: cfg.Detach}
 	if cfg.Detach {
-		if err := process.Start(ctx); err != nil {
-			_, _ = process.Delete(ctx)
-			return ExecResult{}, mapError(err)
-		}
-		result.Pid = process.Pid()
-		result.StartedAt = time.Now()
-		a.recordExec(newExecRecord(id, result, cfg, true))
-		return result, nil
+		return a.execDetached(ctx, id, execID, process, cfg)
 	}
+	return a.execAttached(ctx, id, execID, process, cfg)
+}
 
+// validateExecConfig rejects exec requests that cannot identify a process.
+func validateExecConfig(cfg ExecConfig) error {
+	if len(cfg.Command) == 0 {
+		return fmt.Errorf("%w: exec command is required", ErrInvalidArgument)
+	}
+	if cfg.ID != "" && !identityPattern.MatchString(cfg.ID) {
+		return fmt.Errorf("%w: invalid exec id %q", ErrInvalidArgument, cfg.ID)
+	}
+	return nil
+}
+
+// runningTask loads a container and its task, rejecting non-running tasks.
+func (a *Adapter) runningTask(ctx context.Context, id domain.ContainerID) (Container, Task, error) {
+	container, err := a.loadContainer(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	task, err := container.Task(ctx)
+	if err != nil {
+		return nil, nil, mapError(err)
+	}
+	status, err := task.Status(ctx)
+	if err != nil {
+		return nil, nil, mapError(err)
+	}
+	if status.Status != containerdclient.Running {
+		return nil, nil, fmt.Errorf("container %s is not running: %w", id, ErrConflict)
+	}
+	return container, task, nil
+}
+
+// resolveExecID returns the caller's exec identity or generates a new one.
+func resolveExecID(id string) (string, error) {
+	if id != "" {
+		return id, nil
+	}
+	execID, err := newID()
+	if err != nil {
+		return "", fmt.Errorf("generate exec id: %w", err)
+	}
+	return execID, nil
+}
+
+// execDetached starts an exec process and records it as running.
+func (a *Adapter) execDetached(ctx context.Context, containerID domain.ContainerID, execID string, process Process, cfg ExecConfig) (ExecResult, error) {
+	result := ExecResult{ID: execID, Detached: true}
+	if err := process.Start(ctx); err != nil {
+		_, _ = process.Delete(ctx)
+		return ExecResult{}, mapError(err)
+	}
+	result.Pid = process.Pid()
+	result.StartedAt = time.Now()
+	a.recordExec(newExecRecord(containerID, result, cfg, true))
+	return result, nil
+}
+
+// execAttached starts an exec process and waits for it to exit.
+func (a *Adapter) execAttached(ctx context.Context, containerID domain.ContainerID, execID string, process Process, cfg ExecConfig) (ExecResult, error) {
+	result := ExecResult{ID: execID}
 	exitCh, err := process.Wait(ctx)
 	if err != nil {
 		_, _ = process.Delete(ctx)
@@ -130,25 +166,12 @@ func (a *Adapter) Exec(ctx context.Context, id domain.ContainerID, cfg ExecConfi
 	}
 	result.Pid = process.Pid()
 	result.StartedAt = time.Now()
-	if cfg.Terminal && cfg.Width > 0 && cfg.Height > 0 {
-		if err := process.Resize(ctx, cfg.Width, cfg.Height); err != nil {
-			_, _ = process.Delete(ctx)
-			return ExecResult{}, mapError(err)
-		}
+	if err := resizeExecProcess(ctx, process, cfg); err != nil {
+		return ExecResult{}, err
 	}
 	select {
 	case <-ctx.Done():
-		cleanupCtx := context.WithoutCancel(ctx)
-		_ = process.CloseIO(cleanupCtx)
-		if exit, deleteErr := process.Delete(cleanupCtx); deleteErr == nil {
-			if code, finishedAt, resultErr := exit.Result(); resultErr == nil {
-				exitCode := int(code)
-				result.ExitCode = &exitCode
-				result.FinishedAt = finishedAt
-			}
-		}
-		a.recordExec(newExecRecord(id, result, cfg, false))
-		return ExecResult{}, ctx.Err()
+		return ExecResult{}, a.cancelExec(ctx, containerID, process, cfg, result)
 	case exit, ok := <-exitCh:
 		if !ok {
 			return ExecResult{}, fmt.Errorf("exec %s: exit channel closed: %w", execID, ErrServerError)
@@ -161,11 +184,45 @@ func (a *Adapter) Exec(ctx context.Context, id domain.ContainerID, cfg ExecConfi
 		result.ExitCode = &exitCode
 		result.FinishedAt = exitedAt
 	}
-	// Cleanup is best effort: the process already exited, and its recorded
-	// exit code is what callers consume.
+	return a.finishExec(ctx, containerID, process, cfg, result)
+}
+
+// resizeExecProcess resizes a terminal exec process after start, deleting the
+// process when the resize fails.
+func resizeExecProcess(ctx context.Context, process Process, cfg ExecConfig) error {
+	if !cfg.Terminal || cfg.Width == 0 || cfg.Height == 0 {
+		return nil
+	}
+	if err := process.Resize(ctx, cfg.Width, cfg.Height); err != nil {
+		_, _ = process.Delete(ctx)
+		return mapError(err)
+	}
+	return nil
+}
+
+// cancelExec performs the best-effort cleanup of an exec whose context ended,
+// records what is known about it, and reports the context error.
+func (a *Adapter) cancelExec(ctx context.Context, containerID domain.ContainerID, process Process, cfg ExecConfig, result ExecResult) error {
+	cleanupCtx := context.WithoutCancel(ctx)
+	_ = process.CloseIO(cleanupCtx)
+	if exit, deleteErr := process.Delete(cleanupCtx); deleteErr == nil {
+		if code, finishedAt, resultErr := exit.Result(); resultErr == nil {
+			exitCode := int(code)
+			result.ExitCode = &exitCode
+			result.FinishedAt = finishedAt
+		}
+	}
+	a.recordExec(newExecRecord(containerID, result, cfg, false))
+	return ctx.Err()
+}
+
+// finishExec cleans up an exited exec process and records its result. Cleanup
+// is best effort: the process already exited, and its recorded exit code is
+// what callers consume.
+func (a *Adapter) finishExec(ctx context.Context, containerID domain.ContainerID, process Process, cfg ExecConfig, result ExecResult) (ExecResult, error) {
 	_ = process.CloseIO(ctx)
 	_, _ = process.Delete(ctx)
-	a.recordExec(newExecRecord(id, result, cfg, false))
+	a.recordExec(newExecRecord(containerID, result, cfg, false))
 	return result, nil
 }
 

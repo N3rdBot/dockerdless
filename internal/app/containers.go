@@ -36,83 +36,29 @@ func (s *Service) ContainerCreate(ctx context.Context, request ports.ContainerCr
 	defer cancel()
 
 	name := strings.TrimPrefix(strings.TrimSpace(request.Name), "/")
-	if name != "" && !containerNamePattern.MatchString(name) {
-		return ports.ContainerCreateResult{}, invalidError("Invalid container name (%s), only %s are allowed", name, containerNamePattern)
-	}
-	if strings.TrimSpace(request.Image) == "" {
-		return ports.ContainerCreateResult{}, invalidError("No image specified")
-	}
-	if name != "" {
-		if existing, err := s.registry.GetByName(name); err == nil {
-			return ports.ContainerCreateResult{}, conflictError(
-				"Conflict. The container name \"/%s\" is already in use by container %q. You have to remove (or rename) that container to be able to reuse that name.",
-				name, existing.ID)
-		}
+	if err := s.validateContainerCreate(name, request.Image); err != nil {
+		return ports.ContainerCreateResult{}, err
 	}
 
-	detail, err := s.images.Inspect(ctx, request.Image)
+	detail, err := s.inspectCreateImage(ctx, request.Image)
 	if err != nil {
-		mapped := translateError(err)
-		if errors.Is(mapped, ports.ErrNotFound) {
-			return ports.ContainerCreateResult{}, newDockerError(ports.ErrNotFound, "No such image: "+request.Image, err)
-		}
-		return ports.ContainerCreateResult{}, mapped
+		return ports.ContainerCreateResult{}, err
 	}
 
-	mode, err := cni.ParseNetworkMode(request.NetworkMode)
+	mode, network, err := s.resolveCreateNetwork(ctx, request.NetworkMode)
 	if err != nil {
-		return ports.ContainerCreateResult{}, translateError(err)
-	}
-	networkName := networkNameFor(request.NetworkMode)
-	var network ports.NetworkDetail
-	if mode == cni.ModeNetwork {
-		if networkName == cni.DefaultNetworkName {
-			if _, err := s.networks.EnsureDefaultNetwork(ctx); err != nil {
-				return ports.ContainerCreateResult{}, translateError(err)
-			}
-		}
-		network, err = s.networks.Resolve(ctx, networkName)
-		if err != nil {
-			mapped := translateError(err)
-			if errors.Is(mapped, ports.ErrNotFound) {
-				return ports.ContainerCreateResult{}, newDockerError(ports.ErrNotFound, fmt.Sprintf("network %s not found", networkName), err)
-			}
-			return ports.ContainerCreateResult{}, mapped
-		}
+		return ports.ContainerCreateResult{}, err
 	}
 
-	bindings := s.cloneBindings(request.PortBindings)
-	if len(bindings) > 0 {
-		if mode != cni.ModeNetwork {
-			return ports.ContainerCreateResult{}, invalidError("conflicting options: port publishing and the container type network mode")
-		}
-		if s.alloc == nil {
-			return ports.ContainerCreateResult{}, serverError("host port allocation is not configured")
-		}
-		filled, err := s.allocateBindings(bindings)
-		if err != nil {
-			return ports.ContainerCreateResult{}, translateError(err)
-		}
-		bindings = filled
-	}
-
-	commandJSON, err := json.Marshal(request.Command)
+	bindings, err := s.prepareCreateBindings(request.PortBindings, mode)
 	if err != nil {
-		return ports.ContainerCreateResult{}, serverError("encode container command: %v", err)
+		return ports.ContainerCreateResult{}, err
 	}
-	labels := cloneLabels(request.Labels)
-	if len(request.Mounts) > 0 {
-		encodedMounts, err := json.Marshal(request.Mounts)
-		if err != nil {
-			return ports.ContainerCreateResult{}, serverError("encode container mounts: %v", err)
-		}
-		labels[ports.LabelMounts] = string(encodedMounts)
+
+	labels, err := buildCreateLabels(request, detail)
+	if err != nil {
+		return ports.ContainerCreateResult{}, err
 	}
-	if request.TTY {
-		labels[ports.LabelTTY] = "true"
-	}
-	labels[containerImageDigestLabel] = string(detail.ID)
-	labels[containerCommandLabel] = string(commandJSON)
 
 	containerID, err := s.runtime.CreateContainer(ctx, ports.ContainerCreateSpec{
 		Name:       name,
@@ -157,6 +103,109 @@ func (s *Service) ContainerCreate(ctx context.Context, request ports.ContainerCr
 		return ports.ContainerCreateResult{}, translateError(err)
 	}
 	return ports.ContainerCreateResult{ID: containerID}, nil
+}
+
+// validateContainerCreate enforces Docker's name and image rules and rejects a
+// name already taken by another container.
+func (s *Service) validateContainerCreate(name, image string) error {
+	if name != "" && !containerNamePattern.MatchString(name) {
+		return invalidError("Invalid container name (%s), only %s are allowed", name, containerNamePattern)
+	}
+	if strings.TrimSpace(image) == "" {
+		return invalidError("No image specified")
+	}
+	if name != "" {
+		if existing, err := s.registry.GetByName(name); err == nil {
+			return conflictError(
+				"Conflict. The container name \"/%s\" is already in use by container %q. You have to remove (or rename) that container to be able to reuse that name.",
+				name, existing.ID)
+		}
+	}
+	return nil
+}
+
+// inspectCreateImage resolves the requested reference and maps a missing image
+// onto Docker's 404.
+func (s *Service) inspectCreateImage(ctx context.Context, ref string) (ports.ImageDetail, error) {
+	detail, err := s.images.Inspect(ctx, ref)
+	if err != nil {
+		mapped := translateError(err)
+		if errors.Is(mapped, ports.ErrNotFound) {
+			return ports.ImageDetail{}, newDockerError(ports.ErrNotFound, "No such image: "+ref, err)
+		}
+		return ports.ImageDetail{}, mapped
+	}
+	return detail, nil
+}
+
+// resolveCreateNetwork parses the network mode, ensuring the default network
+// exists and resolving named networks to their CNI detail.
+func (s *Service) resolveCreateNetwork(ctx context.Context, networkMode string) (cni.Mode, ports.NetworkDetail, error) {
+	mode, err := cni.ParseNetworkMode(networkMode)
+	if err != nil {
+		return mode, ports.NetworkDetail{}, translateError(err)
+	}
+	if mode != cni.ModeNetwork {
+		return mode, ports.NetworkDetail{}, nil
+	}
+	networkName := networkNameFor(networkMode)
+	if networkName == cni.DefaultNetworkName {
+		if _, err := s.networks.EnsureDefaultNetwork(ctx); err != nil {
+			return mode, ports.NetworkDetail{}, translateError(err)
+		}
+	}
+	network, err := s.networks.Resolve(ctx, networkName)
+	if err != nil {
+		mapped := translateError(err)
+		if errors.Is(mapped, ports.ErrNotFound) {
+			return mode, ports.NetworkDetail{}, newDockerError(ports.ErrNotFound, fmt.Sprintf("network %s not found", networkName), err)
+		}
+		return mode, ports.NetworkDetail{}, mapped
+	}
+	return mode, network, nil
+}
+
+// prepareCreateBindings clones the requested bindings and allocates concrete
+// host ports, requiring a network mode that can publish them.
+func (s *Service) prepareCreateBindings(requested []domain.PortBinding, mode cni.Mode) ([]domain.PortBinding, error) {
+	bindings := s.cloneBindings(requested)
+	if len(bindings) == 0 {
+		return bindings, nil
+	}
+	if mode != cni.ModeNetwork {
+		return nil, invalidError("conflicting options: port publishing and the container type network mode")
+	}
+	if s.alloc == nil {
+		return nil, serverError("host port allocation is not configured")
+	}
+	filled, err := s.allocateBindings(bindings)
+	if err != nil {
+		return nil, translateError(err)
+	}
+	return filled, nil
+}
+
+// buildCreateLabels marshals the command and mounts and layers in the TTY and
+// image-digest metadata Docker expects to read back on inspect.
+func buildCreateLabels(request ports.ContainerCreateRequest, detail ports.ImageDetail) (map[string]string, error) {
+	commandJSON, err := json.Marshal(request.Command)
+	if err != nil {
+		return nil, serverError("encode container command: %v", err)
+	}
+	labels := cloneLabels(request.Labels)
+	if len(request.Mounts) > 0 {
+		encodedMounts, err := json.Marshal(request.Mounts)
+		if err != nil {
+			return nil, serverError("encode container mounts: %v", err)
+		}
+		labels[ports.LabelMounts] = string(encodedMounts)
+	}
+	if request.TTY {
+		labels[ports.LabelTTY] = "true"
+	}
+	labels[containerImageDigestLabel] = string(detail.ID)
+	labels[containerCommandLabel] = string(commandJSON)
+	return labels, nil
 }
 
 // ContainerList implements GET /containers/json, refreshing runtime state.
@@ -206,9 +255,33 @@ func (s *Service) ContainerStart(ctx context.Context, ref string) error {
 	if err != nil {
 		return err
 	}
-	if state, statusErr := s.runtime.Status(ctx, container.ID); statusErr == nil && state == domain.ContainerStateRunning {
+	if s.containerIsRunning(ctx, container) {
 		return nil
 	}
+	if err := s.startContainerTask(ctx, container); err != nil {
+		return err
+	}
+	attachment, err := s.joinContainerNetwork(ctx, container)
+	if err != nil {
+		return err
+	}
+	if s.finalizeAlreadyExitedStart(ctx, container) {
+		return nil
+	}
+	s.markContainerRunning(ctx, container, attachment)
+	return nil
+}
+
+// containerIsRunning reports whether the runtime already runs the container,
+// making start a no-op.
+func (s *Service) containerIsRunning(ctx context.Context, container domain.Container) bool {
+	state, statusErr := s.runtime.Status(ctx, container.ID)
+	return statusErr == nil && state == domain.ContainerStateRunning
+}
+
+// startContainerTask opens the container log sink and starts the task with the
+// sink's IO writers attached.
+func (s *Service) startContainerTask(ctx context.Context, container domain.Container) error {
 	sink, err := s.openLogSink(container.ID)
 	if err != nil {
 		return serverError("failed to open container logs: %v", err)
@@ -217,33 +290,56 @@ func (s *Service) ContainerStart(ctx context.Context, ref string) error {
 		s.closeLogSink(container.ID)
 		return translateError(err)
 	}
+	return nil
+}
+
+// joinContainerNetwork attaches the container to its CNI network. A failed
+// attach is fatal unless the container already exited, in which case the
+// reservations are released and start continues so the exit gets persisted.
+func (s *Service) joinContainerNetwork(ctx context.Context, container domain.Container) (*containerAttachment, error) {
 	attachment, connectErr := s.attachNetwork(ctx, container)
-	if connectErr != nil {
-		state, statusErr := s.runtime.Status(ctx, container.ID)
-		if statusErr != nil || (state != domain.ContainerStateExited && state != domain.ContainerStateDead) {
-			s.closeLogSink(container.ID)
-			_ = s.runtime.Stop(context.WithoutCancel(ctx), container.ID, s.stopTimeout)
-			return translateError(connectErr)
-		}
+	if connectErr == nil {
+		return attachment, nil
+	}
+	if state, statusErr := s.runtime.Status(ctx, container.ID); statusErr == nil && containerHasExited(state) {
 		s.logger.Warn("container finished before its network namespace could be joined",
 			zap.String("container_id", string(container.ID)),
 			zap.Error(connectErr))
 		s.releaseBindings(container.PortBindings)
+		return nil, nil
 	}
-	if state, statusErr := s.runtime.Status(ctx, container.ID); statusErr == nil &&
-		state != domain.ContainerStateRunning && state != domain.ContainerStateCreated {
-		finished := container
-		finished.State = state
-		if exit, waitErr := s.runtime.Wait(ctx, container.ID); waitErr == nil {
-			finished.ExitCode = int(exit.ExitCode)
-			if !exit.ExitedAt.IsZero() {
-				finished.FinishedAt = exit.ExitedAt
-			}
+	s.closeLogSink(container.ID)
+	_ = s.runtime.Stop(context.WithoutCancel(ctx), container.ID, s.stopTimeout)
+	return nil, translateError(connectErr)
+}
+
+func containerHasExited(state domain.ContainerState) bool {
+	return state == domain.ContainerStateExited || state == domain.ContainerStateDead
+}
+
+// finalizeAlreadyExitedStart persists a container that terminated before the
+// network could join, reporting whether start has nothing left to do.
+func (s *Service) finalizeAlreadyExitedStart(ctx context.Context, container domain.Container) bool {
+	state, statusErr := s.runtime.Status(ctx, container.ID)
+	if statusErr != nil || state == domain.ContainerStateRunning || state == domain.ContainerStateCreated {
+		return false
+	}
+	finished := container
+	finished.State = state
+	if exit, waitErr := s.runtime.Wait(ctx, container.ID); waitErr == nil {
+		finished.ExitCode = int(exit.ExitCode)
+		if !exit.ExitedAt.IsZero() {
+			finished.FinishedAt = exit.ExitedAt
 		}
-		s.closeLogSink(container.ID)
-		s.save(ctx, finished)
-		return nil
 	}
+	s.closeLogSink(container.ID)
+	s.save(ctx, finished)
+	return true
+}
+
+// markContainerRunning applies the joined network endpoint and port mapping and
+// persists the running state.
+func (s *Service) markContainerRunning(ctx context.Context, container domain.Container, attachment *containerAttachment) {
 	if attachment != nil {
 		container.Networks = []domain.NetworkAttachment{attachment.attachment}
 		if len(attachment.ports) > 0 {
@@ -255,7 +351,6 @@ func (s *Service) ContainerStart(ctx context.Context, ref string) error {
 	container.FinishedAt = time.Time{}
 	container.ExitCode = 0
 	s.save(ctx, container)
-	return nil
 }
 
 // ContainerStop implements POST /containers/{id}/stop.
@@ -394,11 +489,8 @@ type containerAttachment struct {
 // CNI entirely. Named networks release the create-time port reservations and
 // let the CNI adapter re-reserve the same concrete ports before portmap runs.
 func (s *Service) attachNetwork(ctx context.Context, container domain.Container) (*containerAttachment, error) {
-	if len(container.Networks) == 0 {
-		return nil, nil
-	}
-	network := container.Networks[0]
-	if network.Name == "" || network.Name == string(cni.ModeHost) || network.Name == string(cni.ModeNone) {
+	network, attach := attachableNetwork(container)
+	if !attach {
 		return nil, nil
 	}
 	if s.tasks == nil {
@@ -414,33 +506,68 @@ func (s *Service) attachNetwork(ctx context.Context, container domain.Container)
 		NetNS:     fmt.Sprintf("/proc/%d/ns/net", pid),
 		Ports:     container.PortBindings,
 	}
-	reservedConnector, hasReservedConnector := s.networks.(interface {
-		ConnectReserved(context.Context, ports.NetworkConnectRequest) (ports.NetworkAttachmentResult, error)
-	})
-	var result ports.NetworkAttachmentResult
-	if hasReservedConnector {
-		result, err = reservedConnector.ConnectReserved(ctx, request)
-	} else {
-		s.allocMu.Lock()
-		if len(container.PortBindings) > 0 && s.alloc != nil {
-			s.alloc.Release(s.reservationsFor(container.PortBindings)...)
-		}
-		s.allocMu.Unlock()
-		result, err = s.networks.Connect(ctx, request)
-	}
+	result, reservedConnector, err := s.connectContainerNetwork(ctx, request, container.PortBindings)
 	if err != nil {
-		if hasReservedConnector && len(container.PortBindings) > 0 && s.alloc != nil {
-			s.allocMu.Lock()
-			_, _, reserveErr := s.alloc.AllocateBindings(container.PortBindings)
-			s.allocMu.Unlock()
-			if reserveErr != nil && !errors.Is(reserveErr, cni.ErrPortInUse) {
-				s.logger.Warn("failed to restore container port reservations after network failure",
-					zap.String("container_id", string(container.ID)), zap.Error(reserveErr))
-			}
-		}
+		s.restorePortReservations(container, reservedConnector)
 		return nil, err
 	}
 	return &containerAttachment{attachment: result.Attachment, ports: result.Ports}, nil
+}
+
+// attachableNetwork returns the container's first network attachment unless the
+// container has none or uses a mode that bypasses CNI.
+func attachableNetwork(container domain.Container) (domain.NetworkAttachment, bool) {
+	if len(container.Networks) == 0 {
+		return domain.NetworkAttachment{}, false
+	}
+	network := container.Networks[0]
+	if isHostOrNoneNetwork(network.Name) {
+		return domain.NetworkAttachment{}, false
+	}
+	return network, true
+}
+
+func isHostOrNoneNetwork(name string) bool {
+	switch name {
+	case "", string(cni.ModeHost), string(cni.ModeNone):
+		return true
+	}
+	return false
+}
+
+// connectContainerNetwork performs the CNI connect, preferring the adapter's
+// reserved-port fast path when available and otherwise releasing the
+// create-time reservations first. The boolean reports which path ran.
+func (s *Service) connectContainerNetwork(ctx context.Context, request ports.NetworkConnectRequest, bindings []domain.PortBinding) (ports.NetworkAttachmentResult, bool, error) {
+	reservedConnector, hasReservedConnector := s.networks.(interface {
+		ConnectReserved(context.Context, ports.NetworkConnectRequest) (ports.NetworkAttachmentResult, error)
+	})
+	if hasReservedConnector {
+		result, err := reservedConnector.ConnectReserved(ctx, request)
+		return result, true, err
+	}
+	s.allocMu.Lock()
+	if len(bindings) > 0 && s.alloc != nil {
+		s.alloc.Release(s.reservationsFor(bindings)...)
+	}
+	s.allocMu.Unlock()
+	result, err := s.networks.Connect(ctx, request)
+	return result, false, err
+}
+
+// restorePortReservations re-reserves the container's ports after a failed
+// reserved connect so a retry can reuse the same concrete ports.
+func (s *Service) restorePortReservations(container domain.Container, hasReservedConnector bool) {
+	if !hasReservedConnector || len(container.PortBindings) == 0 || s.alloc == nil {
+		return
+	}
+	s.allocMu.Lock()
+	_, _, reserveErr := s.alloc.AllocateBindings(container.PortBindings)
+	s.allocMu.Unlock()
+	if reserveErr != nil && !errors.Is(reserveErr, cni.ErrPortInUse) {
+		s.logger.Warn("failed to restore container port reservations after network failure",
+			zap.String("container_id", string(container.ID)), zap.Error(reserveErr))
+	}
 }
 
 // runtimeImageReference returns the containerd-canonical reference for a

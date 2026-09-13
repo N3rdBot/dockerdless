@@ -423,10 +423,7 @@ func (a *Adapter) connect(ctx context.Context, req ConnectRequest, reserved []Po
 	}
 	switch network.Mode {
 	case ModeHost, ModeNone:
-		if len(req.Ports) > 0 {
-			return ConnectResult{}, fmt.Errorf("%w: %s", ErrPortPublishWithMode, network.Mode)
-		}
-		return ConnectResult{Attachment: domain.NetworkAttachment{NetworkID: network.ID, Name: network.Name}}, nil
+		return connectDirect(network, req.Ports)
 	}
 	if network.File == "" {
 		return ConnectResult{}, fmt.Errorf("%w: %q", ErrNetworkNotFound, network.Name)
@@ -434,33 +431,62 @@ func (a *Adapter) connect(ctx context.Context, req ConnectRequest, reserved []Po
 	if strings.TrimSpace(req.NetNS) == "" {
 		return ConnectResult{}, ErrMissingNetNS
 	}
-	ifName := strings.TrimSpace(req.IfName)
-	if ifName == "" {
-		ifName = defaultIfName
-	}
+	ifName := normalizeIfName(req.IfName)
 	list, err := libcni.NetworkConfFromFile(network.File)
 	if err != nil {
 		return ConnectResult{}, fmt.Errorf("cni: loading network %q: %w", network.Name, err)
 	}
-
-	filled := append([]domain.PortBinding(nil), req.Ports...)
-	allocations := reserved
-	if !preallocated {
-		filled, allocations, err = a.alloc.AllocateBindings(req.Ports)
-		if err != nil {
-			return ConnectResult{}, err
-		}
-	}
-	rollback := true
-	defer func() {
-		if rollback && !preallocated {
-			a.alloc.Release(allocations...)
-		}
-	}()
-
-	mappings, err := BuildPortMappings(filled)
+	filled, allocations, err := a.prepareConnectPorts(req.Ports, reserved, preallocated)
 	if err != nil {
 		return ConnectResult{}, err
+	}
+	attachment, err := a.addContainerNetwork(ctx, network, req, list, ifName, filled)
+	if err != nil {
+		a.releaseOnFailure(preallocated, allocations)
+		return ConnectResult{}, err
+	}
+	if a.probe != nil {
+		_ = FillFromNetNS(&attachment, a.probe, req.NetNS, ifName)
+	}
+	a.trackAttachment(attachmentKey{container: req.Container, network: network.Name}, attachmentState{
+		allocations: allocations,
+		ports:       filled,
+		netns:       req.NetNS,
+		ifName:      ifName,
+	})
+	return ConnectResult{Attachment: attachment, Ports: filled}, nil
+}
+
+// connectDirect serves the host/none modes that never touch CNI.
+func connectDirect(network Network, ports []domain.PortBinding) (ConnectResult, error) {
+	if len(ports) > 0 {
+		return ConnectResult{}, fmt.Errorf("%w: %s", ErrPortPublishWithMode, network.Mode)
+	}
+	return ConnectResult{Attachment: domain.NetworkAttachment{NetworkID: network.ID, Name: network.Name}}, nil
+}
+
+// prepareConnectPorts returns the concrete bindings to publish. Reserved
+// bindings were already adopted by the caller; otherwise the allocator turns
+// host port 0 into a real port before CNI sees the request.
+func (a *Adapter) prepareConnectPorts(ports []domain.PortBinding, reserved []PortAllocation, preallocated bool) ([]domain.PortBinding, []PortAllocation, error) {
+	filled := append([]domain.PortBinding(nil), ports...)
+	if preallocated {
+		return filled, reserved, nil
+	}
+	filled, allocations, err := a.alloc.AllocateBindings(ports)
+	if err != nil {
+		return nil, nil, err
+	}
+	return filled, allocations, nil
+}
+
+// addContainerNetwork invokes CNI ADD with the portmappings capability and
+// converts the plugin result into a NetworkAttachment. A result that cannot be
+// decoded triggers a CNI DEL so no half-attached endpoint is left behind.
+func (a *Adapter) addContainerNetwork(ctx context.Context, network Network, req ConnectRequest, list *libcni.NetworkConfigList, ifName string, filled []domain.PortBinding) (domain.NetworkAttachment, error) {
+	mappings, err := BuildPortMappings(filled)
+	if err != nil {
+		return domain.NetworkAttachment{}, err
 	}
 	capabilities := map[string]any{}
 	if len(mappings) > 0 {
@@ -474,26 +500,37 @@ func (a *Adapter) connect(ctx context.Context, req ConnectRequest, reserved []Po
 	}
 	result, err := a.cni.AddNetworkList(ctx, list, runtimeConf)
 	if err != nil {
-		return ConnectResult{}, fmt.Errorf("cni: connecting container %s to %q: %w", req.Container, network.Name, err)
+		return domain.NetworkAttachment{}, fmt.Errorf("cni: connecting container %s to %q: %w", req.Container, network.Name, err)
 	}
 	attachment, err := AttachmentFromResult(network.ID, network.Name, ifName, req.Aliases, result)
 	if err != nil {
 		_ = a.cni.DelNetworkList(ctx, list, runtimeConf)
-		return ConnectResult{}, err
+		return domain.NetworkAttachment{}, err
 	}
-	if a.probe != nil {
-		_ = FillFromNetNS(&attachment, a.probe, req.NetNS, ifName)
+	return attachment, nil
+}
+
+// releaseOnFailure drops a fresh allocation after a failed CNI ADD; reserved
+// (preallocated) ports stay owned by the caller.
+func (a *Adapter) releaseOnFailure(preallocated bool, allocations []PortAllocation) {
+	if !preallocated {
+		a.alloc.Release(allocations...)
 	}
+}
+
+// trackAttachment records a successful attachment for disconnect replay.
+func (a *Adapter) trackAttachment(key attachmentKey, state attachmentState) {
 	a.mu.Lock()
-	a.attachments[attachmentKey{container: req.Container, network: network.Name}] = attachmentState{
-		allocations: allocations,
-		ports:       filled,
-		netns:       req.NetNS,
-		ifName:      ifName,
-	}
+	a.attachments[key] = state
 	a.mu.Unlock()
-	rollback = false
-	return ConnectResult{Attachment: attachment, Ports: filled}, nil
+}
+
+// normalizeIfName applies Docker's default container interface name.
+func normalizeIfName(name string) string {
+	if trimmed := strings.TrimSpace(name); trimmed != "" {
+		return trimmed
+	}
+	return defaultIfName
 }
 
 // Disconnect detaches a container and always releases its port reservations,
@@ -510,32 +547,15 @@ func (a *Adapter) Disconnect(ctx context.Context, req DisconnectRequest) error {
 	if strings.TrimSpace(string(req.Container)) == "" {
 		return ErrMissingContainer
 	}
-	ifName := strings.TrimSpace(req.IfName)
-	if ifName == "" {
-		ifName = defaultIfName
-	}
+	ifName := normalizeIfName(req.IfName)
 	list, err := libcni.NetworkConfFromFile(network.File)
 	if err != nil {
 		return fmt.Errorf("cni: loading network %q: %w", network.Name, err)
 	}
 	key := attachmentKey{container: req.Container, network: network.Name}
-	a.mu.Lock()
-	state, tracked := a.attachments[key]
-	a.mu.Unlock()
+	state, tracked := a.lookupAttachment(key)
 
-	runtimeConf := &libcni.RuntimeConf{
-		ContainerID: string(req.Container),
-		NetNS:       req.NetNS,
-		IfName:      ifName,
-	}
-	if _, cached, cacheErr := a.cni.GetNetworkListCachedConfig(list, runtimeConf); cacheErr == nil && cached != nil {
-		if len(cached.CapabilityArgs) > 0 {
-			runtimeConf.CapabilityArgs = cached.CapabilityArgs
-		}
-		if runtimeConf.NetNS == "" {
-			runtimeConf.NetNS = cached.NetNS
-		}
-	}
+	runtimeConf := disconnectRuntimeConf(a.cni, list, req, ifName)
 	if len(runtimeConf.CapabilityArgs) == 0 && tracked && len(state.ports) > 0 {
 		if mappings, mapErr := BuildPortMappings(state.ports); mapErr == nil {
 			runtimeConf.CapabilityArgs = map[string]any{"portMappings": mappings}
@@ -543,16 +563,49 @@ func (a *Adapter) Disconnect(ctx context.Context, req DisconnectRequest) error {
 	}
 	delErr := a.cni.DelNetworkList(ctx, list, runtimeConf)
 
-	a.mu.Lock()
-	delete(a.attachments, key)
-	a.mu.Unlock()
-	if tracked {
-		a.alloc.Release(state.allocations...)
-	}
+	a.forgetAttachment(key, tracked, state.allocations)
 	if delErr != nil {
 		return fmt.Errorf("cni: disconnecting container %s from %q: %w", req.Container, network.Name, delErr)
 	}
 	return nil
+}
+
+// lookupAttachment fetches the tracked state for an attachment key.
+func (a *Adapter) lookupAttachment(key attachmentKey) (attachmentState, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	state, tracked := a.attachments[key]
+	return state, tracked
+}
+
+// forgetAttachment drops the tracked attachment and always releases its port
+// reservations so no allocation leaks, even when the CNI DEL failed.
+func (a *Adapter) forgetAttachment(key attachmentKey, tracked bool, allocations []PortAllocation) {
+	a.mu.Lock()
+	delete(a.attachments, key)
+	a.mu.Unlock()
+	if tracked {
+		a.alloc.Release(allocations...)
+	}
+}
+
+// disconnectRuntimeConf rebuilds the runtime conf for CNI DEL, restoring the
+// capability args and netns cached at ADD time when the caller has none.
+func disconnectRuntimeConf(client libcni.CNI, list *libcni.NetworkConfigList, req DisconnectRequest, ifName string) *libcni.RuntimeConf {
+	runtimeConf := &libcni.RuntimeConf{
+		ContainerID: string(req.Container),
+		NetNS:       req.NetNS,
+		IfName:      ifName,
+	}
+	if _, cached, cacheErr := client.GetNetworkListCachedConfig(list, runtimeConf); cacheErr == nil && cached != nil {
+		if len(cached.CapabilityArgs) > 0 {
+			runtimeConf.CapabilityArgs = cached.CapabilityArgs
+		}
+		if runtimeConf.NetNS == "" {
+			runtimeConf.NetNS = cached.NetNS
+		}
+	}
+	return runtimeConf
 }
 
 // DisconnectAll tears down every tracked attachment for a container.

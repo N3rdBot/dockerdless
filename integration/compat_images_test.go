@@ -137,14 +137,24 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 
 	repo := uniqueName(t, "tc-built")
 	tag := repo + ":latest"
-	contextDir := fixtureContextDir(t)
-	name := uniqueName(t, "tc-http")
+	container := compatBuildAndStartHTTPContainer(ctx, t, daemon, repo, tag)
 
+	compatAssertBuiltImageConfig(ctx, t, api, tag)
+	mappedPort := compatAssertPublishedPort(ctx, t, api, container)
+	compatAssertHTTPThroughPort(ctx, t, mappedPort)
+	compatAssertHelperStartupLog(ctx, t, container)
+	compatAssertTerminateRemovesBuiltImage(ctx, t, api, daemon, container, tag)
+}
+
+// compatBuildAndStartHTTPContainer builds the fixture context through
+// testcontainers and waits for the helper's HTTP endpoint.
+func compatBuildAndStartHTTPContainer(ctx context.Context, t *testing.T, daemon *daemonProcess, repo, tag string) testcontainers.Container {
+	t.Helper()
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		Context:    contextDir,
+		Context:    fixtureContextDir(ctx, t),
 		Repo:       repo,
 		Tag:        "latest",
-		Name:       name,
+		Name:       uniqueName(t, "tc-http"),
 		WaitingFor: wait.ForHTTP("/").WithPort("8080/tcp").WithStartupTimeout(compatWaitTimeout),
 		Started:    true,
 	})
@@ -153,7 +163,13 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 	}
 	testcontainers.CleanupContainer(t, container)
 	t.Logf("built and started %s from %s with wait.ForHTTP", container.GetContainerID(), tag)
+	return container
+}
 
+// compatAssertBuiltImageConfig pins the built image's config envelope and its
+// appearance in the image list.
+func compatAssertBuiltImageConfig(ctx context.Context, t *testing.T, api *client.Client, tag string) {
+	t.Helper()
 	inspect, err := api.ImageInspect(ctx, tag)
 	if err != nil {
 		t.Fatalf("ImageInspect(%s): %v", tag, err)
@@ -176,21 +192,28 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 	t.Logf("built image config: exposed=%v env=%v entrypoint=%v cmd=%v",
 		inspect.Config.ExposedPorts, inspect.Config.Env, inspect.Config.Entrypoint, inspect.Config.Cmd)
 
-	found := false
+	assertImageListed(ctx, t, api, tag, inspect.ID)
+}
+
+// assertImageListed proves one image ID is present in the daemon's image list.
+func assertImageListed(ctx context.Context, t *testing.T, api *client.Client, tag, imageID string) {
+	t.Helper()
 	listing, err := api.ImageList(ctx, client.ImageListOptions{All: true})
 	if err != nil {
 		t.Fatalf("ImageList: %v", err)
 	}
 	for _, item := range listing.Items {
-		if item.ID == inspect.ID {
-			found = true
-			break
+		if item.ID == imageID {
+			return
 		}
 	}
-	if !found {
-		t.Fatalf("built image %s (%s) missing from ImageList", tag, inspect.ID)
-	}
+	t.Fatalf("built image %s (%s) missing from ImageList", tag, imageID)
+}
 
+// compatAssertPublishedPort pins the library-mapped port against both the
+// daemon inspect and the library inspect, returning the mapped port.
+func compatAssertPublishedPort(ctx context.Context, t *testing.T, api *client.Client, container testcontainers.Container) string {
+	t.Helper()
 	mapped, err := container.MappedPort(ctx, "8080/tcp")
 	if err != nil {
 		t.Fatalf("Container.MappedPort(8080/tcp): %v", err)
@@ -214,19 +237,25 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 		t.Fatalf("testcontainers inspect reports %q but MappedPort is %q", tcPort, mapped.Port())
 	}
 	t.Logf("published port: MappedPort=%s daemon_inspect=%s", mapped.Port(), daemonPort)
+	return mapped.Port()
+}
 
+// compatAssertHTTPThroughPort fetches the helper through the CNI-published
+// host port.
+func compatAssertHTTPThroughPort(ctx context.Context, t *testing.T, mappedPort string) {
+	t.Helper()
 	httpClient := &http.Client{
 		Timeout:   10 * time.Second,
 		Transport: &http.Transport{Proxy: nil},
 	}
 	publishHost := hostPublishAddress(t)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(publishHost, mapped.Port())+"/", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(publishHost, mappedPort)+"/", nil)
 	if err != nil {
-		t.Fatalf("build GET http://%s:%s/: %v", publishHost, mapped.Port(), err)
+		t.Fatalf("build GET http://%s:%s/: %v", publishHost, mappedPort, err)
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		t.Fatalf("GET http://%s:%s/: %v", publishHost, mapped.Port(), err)
+		t.Fatalf("GET http://%s:%s/: %v", publishHost, mappedPort, err)
 	}
 	body, err := io.ReadAll(response.Body)
 	_ = response.Body.Close()
@@ -237,7 +266,12 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 		t.Fatalf("HTTP GET mapped port = %d %q, want 200 dls-helper-ready", response.StatusCode, body)
 	}
 	t.Logf("HTTP through CNI portmap: status=%d body=%q", response.StatusCode, body)
+}
 
+// compatAssertHelperStartupLog pins the helper's startup line in the container
+// logs.
+func compatAssertHelperStartupLog(ctx context.Context, t *testing.T, container testcontainers.Container) {
+	t.Helper()
 	logs, err := container.Logs(ctx)
 	if err != nil {
 		t.Fatalf("Container.Logs: %v", err)
@@ -251,7 +285,12 @@ func compatBuildPublishedPortsAndWaitForHTTP(t *testing.T, daemon *daemonProcess
 		t.Fatalf("logs = %q, want the helper startup line", string(logContent))
 	}
 	t.Logf("container logs: %q", strings.TrimSpace(string(logContent)))
+}
 
+// compatAssertTerminateRemovesBuiltImage pins the terminate side effects on the
+// container record and the built image tag.
+func compatAssertTerminateRemovesBuiltImage(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, container testcontainers.Container, tag string) {
+	t.Helper()
 	if err := container.Terminate(ctx, testcontainers.StopTimeout(5*time.Second)); err != nil {
 		t.Fatalf("Container.Terminate: %v\n--- daemon logs ---\n%s", err, daemon.Logs())
 	}

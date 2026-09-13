@@ -47,37 +47,55 @@ func TestBuildSpecTranslatesDockerConfig(t *testing.T) {
 	if spec.Process == nil {
 		t.Fatal("spec process is nil")
 	}
+	assertTranslatedProcess(t, spec.Process)
+	assertTranslatedMetadata(t, spec.Hostname, spec.Annotations)
+	assertTranslatedMounts(t, spec.Mounts)
+	if spec.Linux == nil || !strings.Contains(spec.Linux.CgroupsPath, "testns") {
+		t.Fatalf("cgroups path %+v does not carry the namespace", spec.Linux)
+	}
+}
+
+func assertTranslatedProcess(t *testing.T, process *specs.Process) {
+	t.Helper()
 	wantArgs := []string{"/bin/sh", "echo", "hi"}
-	if !slices.Equal(spec.Process.Args, wantArgs) {
-		t.Fatalf("args = %v, want %v", spec.Process.Args, wantArgs)
+	if !slices.Equal(process.Args, wantArgs) {
+		t.Fatalf("args = %v, want %v", process.Args, wantArgs)
 	}
-	if got := countEnv(spec.Process.Env, "FOO=bar"); got != 1 {
-		t.Fatalf("FOO=bar count = %d, want 1 (env %v)", got, spec.Process.Env)
+	if got := countEnv(process.Env, "FOO=bar"); got != 1 {
+		t.Fatalf("FOO=bar count = %d, want 1 (env %v)", got, process.Env)
 	}
-	if got := countEnv(spec.Process.Env, "PATH=/usr/bin:/bin"); got != 1 {
-		t.Fatalf("image PATH was not preserved: %v", spec.Process.Env)
+	if got := countEnv(process.Env, "PATH=/usr/bin:/bin"); got != 1 {
+		t.Fatalf("image PATH was not preserved: %v", process.Env)
 	}
-	if spec.Process.Cwd != "/override" {
-		t.Fatalf("cwd = %q, want /override", spec.Process.Cwd)
+	if process.Cwd != "/override" {
+		t.Fatalf("cwd = %q, want /override", process.Cwd)
 	}
-	if spec.Process.User.UID != 1000 || spec.Process.User.GID != 1000 {
-		t.Fatalf("user = %d:%d, want 1000:1000", spec.Process.User.UID, spec.Process.User.GID)
+	if process.User.UID != 1000 || process.User.GID != 1000 {
+		t.Fatalf("user = %d:%d, want 1000:1000", process.User.UID, process.User.GID)
 	}
-	if spec.Hostname != "custom-host" {
-		t.Fatalf("hostname = %q, want custom-host", spec.Hostname)
-	}
-	if got := spec.Annotations["app"]; got != "demo" {
-		t.Fatalf("annotation app = %q, want demo", got)
-	}
-	if !spec.Process.Terminal {
+	if !process.Terminal {
 		t.Fatal("terminal was not set")
 	}
-	if len(spec.Mounts) < 2 {
-		t.Fatalf("mounts = %v, want the two translated mounts", spec.Mounts)
+}
+
+func assertTranslatedMetadata(t *testing.T, hostname string, annotations map[string]string) {
+	t.Helper()
+	if hostname != "custom-host" {
+		t.Fatalf("hostname = %q, want custom-host", hostname)
 	}
-	dataMount := findMount(spec.Mounts, "/data")
+	if got := annotations["app"]; got != "demo" {
+		t.Fatalf("annotation app = %q, want demo", got)
+	}
+}
+
+func assertTranslatedMounts(t *testing.T, mounts []specs.Mount) {
+	t.Helper()
+	if len(mounts) < 2 {
+		t.Fatalf("mounts = %v, want the two translated mounts", mounts)
+	}
+	dataMount := findMount(mounts, "/data")
 	if dataMount == nil {
-		t.Fatalf("mount /data missing from %v", spec.Mounts)
+		t.Fatalf("mount /data missing from %v", mounts)
 	}
 	if dataMount.Type != "bind" || dataMount.Source != "/host/data" {
 		t.Fatalf("bind mount = %+v", dataMount)
@@ -85,12 +103,9 @@ func TestBuildSpecTranslatesDockerConfig(t *testing.T) {
 	if !slices.Contains(dataMount.Options, "rbind") || !slices.Contains(dataMount.Options, "ro") {
 		t.Fatalf("bind mount options = %v, want rbind+ro", dataMount.Options)
 	}
-	tmpMount := findMount(spec.Mounts, "/tmp")
+	tmpMount := findMount(mounts, "/tmp")
 	if tmpMount == nil || tmpMount.Type != "tmpfs" {
 		t.Fatalf("tmpfs mount = %+v", tmpMount)
-	}
-	if spec.Linux == nil || !strings.Contains(spec.Linux.CgroupsPath, "testns") {
-		t.Fatalf("cgroups path %+v does not carry the namespace", spec.Linux)
 	}
 }
 

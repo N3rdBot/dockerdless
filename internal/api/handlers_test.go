@@ -367,7 +367,20 @@ func TestHandlers_execCreateAndInspect(t *testing.T) {
 }
 
 func TestHandlers_networkLifecycle(t *testing.T) {
-	service := &fakeService{
+	handler := NewRouterWithDependencies(Dependencies{Service: networkLifecycleService(t)})
+
+	assertNetworkList(t, handler)
+	assertNetworkInspect(t, handler)
+	assertNetworkCreate(t, handler)
+	assertNetworkConnect(t, handler)
+	assertNetworkRemove(t, handler)
+}
+
+// networkLifecycleService returns the fake service backing the network
+// lifecycle assertions, preserving each stub's request validation.
+func networkLifecycleService(t *testing.T) *fakeService {
+	t.Helper()
+	return &fakeService{
 		networkList: func(context.Context) ([]ports.NetworkDetail, error) {
 			return []ports.NetworkDetail{
 				{ID: "bridge-id", Name: "bridge", Driver: "bridge", Mode: "network", Subnet: "10.88.0.0/24", Gateway: "10.88.0.1"},
@@ -394,8 +407,10 @@ func TestHandlers_networkLifecycle(t *testing.T) {
 		},
 		networkRemove: func(context.Context, string) error { return nil },
 	}
-	handler := NewRouterWithDependencies(Dependencies{Service: service})
+}
 
+func assertNetworkList(t *testing.T, handler http.Handler) {
+	t.Helper()
 	listRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(listRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/networks", nil))
 	if listRecorder.Code != http.StatusOK {
@@ -408,7 +423,10 @@ func TestHandlers_networkLifecycle(t *testing.T) {
 	if len(summaries) != 2 || summaries[0].Name != "bridge" || summaries[0].IPAM.Config[0].Subnet.String() != "10.88.0.0/24" {
 		t.Fatalf("unexpected network summaries %+v", summaries)
 	}
+}
 
+func assertNetworkInspect(t *testing.T, handler http.Handler) {
+	t.Helper()
 	inspectRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(inspectRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/networks/qa-net", nil))
 	if inspectRecorder.Code != http.StatusOK {
@@ -421,19 +439,28 @@ func TestHandlers_networkLifecycle(t *testing.T) {
 	if inspectedNetwork.Name != "qa-net" || inspectedNetwork.ID != "net-id" {
 		t.Fatalf("unexpected network inspect %+v", inspectedNetwork)
 	}
+}
 
+func assertNetworkCreate(t *testing.T, handler http.Handler) {
+	t.Helper()
 	createRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(createRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/networks/create", strings.NewReader(`{"Name":"frontend","Driver":"bridge"}`)))
 	if createRecorder.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", createRecorder.Code)
 	}
+}
 
+func assertNetworkConnect(t *testing.T, handler http.Handler) {
+	t.Helper()
 	connectRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(connectRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/networks/network-frontend/connect", strings.NewReader(`{"Container":"c1","EndpointConfig":{"Aliases":["web"]}}`)))
 	if connectRecorder.Code != http.StatusNoContent {
 		t.Fatalf("expected 204, got %d body=%s", connectRecorder.Code, connectRecorder.Body.String())
 	}
+}
 
+func assertNetworkRemove(t *testing.T, handler http.Handler) {
+	t.Helper()
 	removeRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(removeRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodDelete, "/networks/network-frontend", nil))
 	if removeRecorder.Code != http.StatusNoContent {
@@ -485,6 +512,13 @@ func TestHandlers_pingAndVersionAndInfo(t *testing.T) {
 	}}
 	handler := NewRouterWithDependencies(Dependencies{Service: service})
 
+	assertPingHead(t, handler)
+	assertVersionResponse(t, handler)
+	assertInfoResponse(t, handler)
+}
+
+func assertPingHead(t *testing.T, handler http.Handler) {
+	t.Helper()
 	headRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(headRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodHead, "/_ping", nil))
 	if headRecorder.Code != http.StatusOK || headRecorder.Body.Len() != 0 {
@@ -493,7 +527,10 @@ func TestHandlers_pingAndVersionAndInfo(t *testing.T) {
 	if headRecorder.Header().Get("Docker-Experimental") != "false" {
 		t.Fatalf("expected Docker-Experimental header, got %q", headRecorder.Header().Get("Docker-Experimental"))
 	}
+}
 
+func assertVersionResponse(t *testing.T, handler http.Handler) {
+	t.Helper()
 	versionRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(versionRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/v1.44/version", nil))
 	var version system.VersionResponse
@@ -503,7 +540,10 @@ func TestHandlers_pingAndVersionAndInfo(t *testing.T) {
 	if version.APIVersion != AdvertisedAPIVersion || version.MinAPIVersion != MinimumAPIVersion || len(version.Components) == 0 {
 		t.Fatalf("unexpected version response %+v", version)
 	}
+}
 
+func assertInfoResponse(t *testing.T, handler http.Handler) {
+	t.Helper()
 	infoRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(infoRecorder, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/info", nil))
 	var info system.Info

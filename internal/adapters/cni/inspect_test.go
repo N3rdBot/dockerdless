@@ -6,6 +6,8 @@ import (
 	"net"
 	"testing"
 
+	"github.com/moby/moby/api/types/container"
+
 	"github.com/N3rdBot/dockerdless/internal/adapters/cni"
 	"github.com/N3rdBot/dockerdless/internal/domain"
 )
@@ -57,12 +59,7 @@ func TestSynthesizeSettingsPublishesNonzeroPorts(t *testing.T) {
 		MACAddress:  "aa:bb:cc:dd:ee:02",
 		Aliases:     []string{"web-alias"},
 	}
-	_, err := cni.SynthesizeSettings([]domain.NetworkAttachment{attachment}, []domain.PortBinding{
-		{ContainerPort: 80, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 0},
-	})
-	if !errors.Is(err, cni.ErrUnallocatedPort) {
-		t.Fatalf("SynthesizeSettings(host port 0) = %v, want ErrUnallocatedPort", err)
-	}
+	assertSynthesizeSettingsRejectsUnallocated(t, attachment)
 
 	settings, err := cni.SynthesizeSettings([]domain.NetworkAttachment{attachment}, []domain.PortBinding{
 		{ContainerPort: 80, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 49153},
@@ -70,29 +67,58 @@ func TestSynthesizeSettingsPublishesNonzeroPorts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SynthesizeSettings: %v", err)
 	}
+	assertPublishedSettings(t, settings)
+}
+
+// settingsDocument mirrors the JSON shape consumers see, so the assertions run
+// against the serialized form instead of the Go struct.
+type settingsDocument struct {
+	Ports    map[string][]publishedBinding `json:"Ports"`
+	Networks map[string]publishedEndpoint  `json:"Networks"`
+}
+
+type publishedBinding struct {
+	HostIP   string `json:"HostIp"`
+	HostPort string `json:"HostPort"`
+}
+
+type publishedEndpoint struct {
+	IPAddress  string
+	Gateway    string
+	MacAddress string
+	Aliases    []string
+	NetworkID  string
+}
+
+func assertSynthesizeSettingsRejectsUnallocated(t *testing.T, attachment domain.NetworkAttachment) {
+	t.Helper()
+	_, err := cni.SynthesizeSettings([]domain.NetworkAttachment{attachment}, []domain.PortBinding{
+		{ContainerPort: 80, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 0},
+	})
+	if !errors.Is(err, cni.ErrUnallocatedPort) {
+		t.Fatalf("SynthesizeSettings(host port 0) = %v, want ErrUnallocatedPort", err)
+	}
+}
+
+func assertPublishedSettings(t *testing.T, settings *container.NetworkSettings) {
+	t.Helper()
 	raw, err := json.Marshal(settings)
 	if err != nil {
 		t.Fatalf("marshal settings: %v", err)
 	}
-	var document struct {
-		Ports map[string][]struct {
-			HostIP   string `json:"HostIp"`
-			HostPort string `json:"HostPort"`
-		} `json:"Ports"`
-		Networks map[string]struct {
-			IPAddress  string
-			Gateway    string
-			MacAddress string
-			Aliases    []string
-			NetworkID  string
-		} `json:"Networks"`
-	}
+	var document settingsDocument
 	if err := json.Unmarshal(raw, &document); err != nil {
 		t.Fatalf("unmarshal settings %s: %v", raw, err)
 	}
-	bindings, ok := document.Ports["80/tcp"]
+	assertPublishedBindings(t, document.Ports)
+	assertPublishedEndpoint(t, document.Networks)
+}
+
+func assertPublishedBindings(t *testing.T, ports map[string][]publishedBinding) {
+	t.Helper()
+	bindings, ok := ports["80/tcp"]
 	if !ok || len(bindings) != 1 {
-		t.Fatalf("Ports = %v, want 80/tcp entry", document.Ports)
+		t.Fatalf("Ports = %v, want 80/tcp entry", ports)
 	}
 	if bindings[0].HostPort != "49153" || bindings[0].HostPort == "0" {
 		t.Fatalf("published HostPort = %q, want nonzero 49153", bindings[0].HostPort)
@@ -100,9 +126,13 @@ func TestSynthesizeSettingsPublishesNonzeroPorts(t *testing.T) {
 	if bindings[0].HostIP != "0.0.0.0" {
 		t.Fatalf("HostIp = %q", bindings[0].HostIP)
 	}
-	endpoint, ok := document.Networks["web"]
+}
+
+func assertPublishedEndpoint(t *testing.T, networks map[string]publishedEndpoint) {
+	t.Helper()
+	endpoint, ok := networks["web"]
 	if !ok {
-		t.Fatalf("Networks = %v, want web", document.Networks)
+		t.Fatalf("Networks = %v, want web", networks)
 	}
 	if endpoint.IPAddress != "10.88.0.5" || endpoint.Gateway != "10.88.0.1" {
 		t.Fatalf("endpoint = %+v", endpoint)

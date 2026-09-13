@@ -27,6 +27,17 @@ func TestDaemonFailureSemantics(t *testing.T) {
 	api := daemon.Client()
 
 	const missingImage = "docker.io/library/dockerdless-definitely-missing:latest"
+	assertMissingImageNotFound(ctx, t, api, missingImage)
+	assertDuplicateNameConflict(ctx, t, api, daemon, reference)
+	assertPortCollisionConflict(ctx, t, api, daemon, reference)
+	assertImageInUseAndRepeatedCleanup(ctx, t, api, daemon, reference, missingImage)
+	t.Log("failure semantics: 404 missing image, 409 duplicate name, 409 port collision, 409 image in use, 404 repeated cleanup")
+}
+
+// assertMissingImageNotFound pins the Docker 404 envelope for both inspect and
+// create against a missing image.
+func assertMissingImageNotFound(ctx context.Context, t *testing.T, api *client.Client, missingImage string) {
+	t.Helper()
 	if _, err := api.ImageInspect(ctx, missingImage); !errdefs.IsNotFound(err) {
 		t.Fatalf("ImageInspect(%s) error = %v, want Docker 404", missingImage, err)
 	}
@@ -42,7 +53,12 @@ func TestDaemonFailureSemantics(t *testing.T) {
 	if message := errorMessage(createErr); !strings.Contains(message, "No such image") {
 		t.Fatalf("missing image message = %q, want Docker No such image", message)
 	}
+}
 
+// assertDuplicateNameConflict pins the Docker 409 envelope for a second
+// container using an existing name, then removes the first container.
+func assertDuplicateNameConflict(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, reference string) {
+	t.Helper()
 	name := uniqueName(t, "duplicate")
 	created, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: name,
@@ -71,9 +87,14 @@ func TestDaemonFailureSemantics(t *testing.T) {
 	if message := errorMessage(duplicateErr); !strings.Contains(message, "already in use") {
 		t.Fatalf("duplicate name message = %q, want Docker name-in-use conflict", message)
 	}
-	removeContainer(t, daemon, created.ID, name)
+	removeContainer(ctx, t, daemon, created.ID, name)
+}
 
-	probe, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+// assertPortCollisionConflict pins the Docker 409 allocator envelope when two
+// containers request the same fixed host port, then removes the first.
+func assertPortCollisionConflict(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, reference string) {
+	t.Helper()
+	probe, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve a host port: %v", err)
 	}
@@ -109,8 +130,13 @@ func TestDaemonFailureSemantics(t *testing.T) {
 	if message := errorMessage(collisionErr); !strings.Contains(message, "already allocated") {
 		t.Fatalf("port collision message = %q, want the allocator conflict", message)
 	}
-	removeContainer(t, daemon, first.ID, "port-a")
+	removeContainer(ctx, t, daemon, first.ID, "port-a")
+}
 
+// assertImageInUseAndRepeatedCleanup pins the Docker 409 image-in-use envelope,
+// then the 404 for a repeated forced container removal and a missing image.
+func assertImageInUseAndRepeatedCleanup(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, reference, missingImage string) {
+	t.Helper()
 	inUse, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: uniqueName(t, "in-use"),
 		Config: &container.Config{
@@ -138,12 +164,11 @@ func TestDaemonFailureSemantics(t *testing.T) {
 	if _, err := api.ImageRemove(ctx, missingImage, client.ImageRemoveOptions{}); !errdefs.IsNotFound(err) {
 		t.Fatalf("ImageRemove(%s) = %v, want Docker 404", missingImage, err)
 	}
-	t.Log("failure semantics: 404 missing image, 409 duplicate name, 409 port collision, 409 image in use, 404 repeated cleanup")
 }
 
-func removeContainer(t *testing.T, daemon *daemonProcess, id, name string) {
+func removeContainer(ctx context.Context, t *testing.T, daemon *daemonProcess, id, name string) {
 	t.Helper()
-	if _, err := daemon.Client().ContainerRemove(context.Background(), id, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+	if _, err := daemon.Client().ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
 		t.Fatalf("remove container %s (%s): %v", name, id, err)
 	}
 }
@@ -205,6 +230,16 @@ func TestDaemonMultiNetworkAttachRequiresRunningContainer(t *testing.T) {
 	defer cancel()
 	api := daemon.Client()
 
+	networkID, containerID := setupMultiNetworkAttachFixture(ctx, t, api, daemon, reference)
+	assertConnectBeforeStartConflict(ctx, t, api, networkID, containerID)
+	assertConnectAfterStartAttachFails(ctx, t, api, daemon, networkID, containerID)
+	assertSingleBridgeAttachment(ctx, t, api, containerID)
+}
+
+// setupMultiNetworkAttachFixture creates the second bridge network and the
+// container attached to bridge, registering both for cleanup.
+func setupMultiNetworkAttachFixture(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, reference string) (string, string) {
+	t.Helper()
 	netName := uniqueName(t, "attach-net")
 	createdNetwork, err := api.NetworkCreate(ctx, netName, client.NetworkCreateOptions{Driver: "bridge"})
 	if err != nil {
@@ -238,9 +273,15 @@ func TestDaemonMultiNetworkAttachRequiresRunningContainer(t *testing.T) {
 		}
 		return nil
 	})
+	return createdNetwork.ID, created.ID
+}
 
-	if _, err := api.NetworkConnect(ctx, createdNetwork.ID, client.NetworkConnectOptions{
-		Container:      created.ID,
+// assertConnectBeforeStartConflict pins the Docker 409 for attaching a network
+// before the container runs.
+func assertConnectBeforeStartConflict(ctx context.Context, t *testing.T, api *client.Client, networkID, containerID string) {
+	t.Helper()
+	if _, err := api.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container:      containerID,
 		EndpointConfig: &network.EndpointSettings{},
 	}); !errdefs.IsConflict(err) {
 		t.Fatalf("NetworkConnect before start = %v, want Docker 409", err)
@@ -248,12 +289,17 @@ func TestDaemonMultiNetworkAttachRequiresRunningContainer(t *testing.T) {
 		t.Fatalf("NetworkConnect before start message = %q, want is not running", err.Error())
 	}
 	t.Log("multi-network attach before start -> 409 Container is not running (documented limitation)")
+}
 
-	if _, err := api.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		t.Fatalf("ContainerStart(%s): %v\n--- daemon logs ---\n%s", created.ID, err, daemon.Logs())
+// assertConnectAfterStartAttachFails starts the container and pins the CNI
+// attach failure for a second network.
+func assertConnectAfterStartAttachFails(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, networkID, containerID string) {
+	t.Helper()
+	if _, err := api.ContainerStart(ctx, containerID, client.ContainerStartOptions{}); err != nil {
+		t.Fatalf("ContainerStart(%s): %v\n--- daemon logs ---\n%s", containerID, err, daemon.Logs())
 	}
-	if _, err := api.NetworkConnect(ctx, createdNetwork.ID, client.NetworkConnectOptions{
-		Container:      created.ID,
+	if _, err := api.NetworkConnect(ctx, networkID, client.NetworkConnectOptions{
+		Container:      containerID,
 		EndpointConfig: &network.EndpointSettings{},
 	}); err == nil {
 		t.Fatal("NetworkConnect after start unexpectedly attached a second network; the MVP supports one network per container")
@@ -262,7 +308,13 @@ func TestDaemonMultiNetworkAttachRequiresRunningContainer(t *testing.T) {
 	} else {
 		t.Logf("multi-network attach after start -> %q (documented limitation: one network per container)", err.Error())
 	}
-	inspect, err := api.ContainerInspect(ctx, created.ID, client.ContainerInspectOptions{})
+}
+
+// assertSingleBridgeAttachment proves the failed second attach left exactly the
+// original bridge attachment.
+func assertSingleBridgeAttachment(ctx context.Context, t *testing.T, api *client.Client, containerID string) {
+	t.Helper()
+	inspect, err := api.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		t.Fatalf("ContainerInspect: %v", err)
 	}

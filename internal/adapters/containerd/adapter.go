@@ -181,34 +181,56 @@ func (a *Adapter) StartWithOptions(ctx context.Context, id domain.ContainerID, o
 	terminal := labels[labelTerminal] == "true"
 	openStdin := labels[labelOpenStdin] == "true"
 
-	if existing, err := container.Task(ctx); err == nil {
-		status, err := existing.Status(ctx)
-		if err != nil {
-			return mapError(err)
-		}
-		switch status.Status {
-		case containerdclient.Running, containerdclient.Paused, containerdclient.Pausing:
-			return fmt.Errorf("container %s is already running: %w", id, ErrConflict)
-		}
-		if _, err := existing.Delete(ctx); err != nil && !errdefs.IsNotFound(err) {
-			return mapError(err)
-		}
-	} else if !errdefs.IsNotFound(err) {
+	if err := discardStaleTask(ctx, id, container); err != nil {
+		return err
+	}
+	task, err := container.NewTask(ctx, a.startTaskIO(id, opts, terminal, openStdin))
+	if err != nil {
+		a.releaseStdin(id)
 		return mapError(err)
 	}
+	return a.waitAndStartTask(ctx, id, task)
+}
 
+// discardStaleTask removes a task left behind by an exited container; a task
+// that is still running conflicts.
+func discardStaleTask(ctx context.Context, id domain.ContainerID, container Container) error {
+	existing, err := container.Task(ctx)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return mapError(err)
+	}
+	status, err := existing.Status(ctx)
+	if err != nil {
+		return mapError(err)
+	}
+	switch status.Status {
+	case containerdclient.Running, containerdclient.Paused, containerdclient.Pausing:
+		return fmt.Errorf("container %s is already running: %w", id, ErrConflict)
+	}
+	if _, err := existing.Delete(ctx); err != nil && !errdefs.IsNotFound(err) {
+		return mapError(err)
+	}
+	return nil
+}
+
+// startTaskIO builds the task streams, opening a detached stdin pipe when the
+// container asked for an interactive stdin without a TTY.
+func (a *Adapter) startTaskIO(id domain.ContainerID, opts StartOptions, terminal, openStdin bool) TaskIO {
 	streams := TaskIO{Terminal: terminal, Stdin: opts.Stdin, Stdout: opts.Stdout, Stderr: opts.Stderr}
 	if streams.Stdin == nil && streams.Stdout == nil && streams.Stderr == nil && openStdin && !terminal {
 		reader, writer := io.Pipe()
 		a.rememberStdin(id, writer)
 		streams.Stdin = reader
 	}
+	return streams
+}
 
-	task, err := container.NewTask(ctx, streams)
-	if err != nil {
-		a.releaseStdin(id)
-		return mapError(err)
-	}
+// waitAndStartTask registers the exit watch before starting the task so the
+// exit event is not missed, releasing the stdin pipe on any failure.
+func (a *Adapter) waitAndStartTask(ctx context.Context, id domain.ContainerID, task Task) error {
 	if _, err := task.Wait(ctx); err != nil {
 		_, _ = task.Delete(ctx)
 		a.releaseStdin(id)
@@ -231,50 +253,69 @@ func (a *Adapter) Stop(ctx context.Context, id domain.ContainerID, timeout time.
 	if err != nil {
 		return err
 	}
-	task, err := container.Task(ctx)
-	if err != nil {
-		if errdefs.IsNotFound(err) {
-			a.releaseStdin(id)
-			return nil
-		}
-		return mapError(err)
+	task, done, err := a.stoppableTask(ctx, id, container)
+	if done || err != nil {
+		return err
 	}
-	status, err := task.Status(ctx)
-	if err != nil {
-		return mapError(err)
-	}
-	switch status.Status {
-	case containerdclient.Created, containerdclient.Stopped:
-		if err := task.CloseIO(ctx); err != nil && !errdefs.IsNotFound(err) {
-			return mapError(err)
-		}
-		a.releaseStdin(id)
-		return nil
-	}
-
 	exitCh, err := task.Wait(ctx)
 	if err != nil {
 		return mapError(err)
 	}
 	if timeout > 0 {
-		if err := task.Kill(ctx, syscall.SIGTERM); err != nil {
-			return mapError(err)
-		}
-		timer := time.NewTimer(timeout)
-		defer timer.Stop()
-		select {
-		case <-exitCh:
-			a.releaseStdin(id)
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-timer.C:
+		exited, err := a.terminateWithTimeout(ctx, id, task, exitCh, timeout)
+		if exited || err != nil {
+			return err
 		}
 	}
 	if err := task.Kill(ctx, syscall.SIGKILL); err != nil {
 		return mapError(err)
 	}
 	return a.waitForExit(ctx, id, exitCh)
+}
+
+// stoppableTask loads the task to stop, reporting done when the container has
+// no task or its task already stopped.
+func (a *Adapter) stoppableTask(ctx context.Context, id domain.ContainerID, container Container) (Task, bool, error) {
+	task, err := container.Task(ctx)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			a.releaseStdin(id)
+			return nil, true, nil
+		}
+		return nil, false, mapError(err)
+	}
+	status, err := task.Status(ctx)
+	if err != nil {
+		return nil, false, mapError(err)
+	}
+	switch status.Status {
+	case containerdclient.Created, containerdclient.Stopped:
+		if err := task.CloseIO(ctx); err != nil && !errdefs.IsNotFound(err) {
+			return nil, false, mapError(err)
+		}
+		a.releaseStdin(id)
+		return nil, true, nil
+	}
+	return task, false, nil
+}
+
+// terminateWithTimeout sends SIGTERM and waits for the task to exit, reporting
+// whether it exited before the timeout.
+func (a *Adapter) terminateWithTimeout(ctx context.Context, id domain.ContainerID, task Task, exitCh <-chan containerdclient.ExitStatus, timeout time.Duration) (bool, error) {
+	if err := task.Kill(ctx, syscall.SIGTERM); err != nil {
+		return false, mapError(err)
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-exitCh:
+		a.releaseStdin(id)
+		return true, nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case <-timer.C:
+		return false, nil
+	}
 }
 
 // Kill sends an arbitrary POSIX signal to a running container.

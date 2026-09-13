@@ -10,6 +10,24 @@ import (
 
 func TestRegistryStateInterfaceAndRename(t *testing.T) {
 	ctx := context.Background()
+	id, image, digest := newRegistryTestIDs(t)
+	container := domain.Container{
+		ID:          id,
+		Name:        "before-rename",
+		Spec:        domain.ContainerSpec{Image: image},
+		ImageDigest: digest,
+		Labels:      map[string]string{"role": "api"},
+		State:       domain.ContainerStateRunning,
+	}
+	registry := domain.NewRegistry()
+
+	saveAndRenameContainer(ctx, t, registry, container, id)
+	assertRenamedContainer(ctx, t, registry, id, image, digest)
+	assertRemovedContainer(ctx, t, registry, id)
+}
+
+func newRegistryTestIDs(t *testing.T) (domain.ContainerID, domain.ImageID, domain.ImageID) {
+	t.Helper()
 	id, err := domain.NewContainerID("registry-container")
 	if err != nil {
 		t.Fatalf("construct container id: %v", err)
@@ -22,16 +40,11 @@ func TestRegistryStateInterfaceAndRename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct image digest: %v", err)
 	}
-	container := domain.Container{
-		ID:          id,
-		Name:        "before-rename",
-		Spec:        domain.ContainerSpec{Image: image},
-		ImageDigest: digest,
-		Labels:      map[string]string{"role": "api"},
-		State:       domain.ContainerStateRunning,
-	}
-	registry := domain.NewRegistry()
+	return id, image, digest
+}
 
+func saveAndRenameContainer(ctx context.Context, t *testing.T, registry *domain.Registry, container domain.Container, id domain.ContainerID) {
+	t.Helper()
 	if err := registry.Save(ctx, container); err != nil {
 		t.Fatalf("save container: %v", err)
 	}
@@ -41,6 +54,10 @@ func TestRegistryStateInterfaceAndRename(t *testing.T) {
 	if _, err := registry.GetByName("before-rename"); !errors.Is(err, domain.ErrContainerNotFound) {
 		t.Fatalf("expected old name to be absent, got %v", err)
 	}
+}
+
+func assertRenamedContainer(ctx context.Context, t *testing.T, registry *domain.Registry, id domain.ContainerID, image, digest domain.ImageID) {
+	t.Helper()
 	byName, err := registry.GetByName("after-rename")
 	if err != nil {
 		t.Fatalf("get renamed container: %v", err)
@@ -67,7 +84,10 @@ func TestRegistryStateInterfaceAndRename(t *testing.T) {
 	if again.Labels["role"] != "api" {
 		t.Fatalf("registry returned aliased labels: %#v", again.Labels)
 	}
+}
 
+func assertRemovedContainer(ctx context.Context, t *testing.T, registry *domain.Registry, id domain.ContainerID) {
+	t.Helper()
 	if got := registry.List(); len(got) != 1 || got[0].ID != id {
 		t.Fatalf("expected one listed container %q, got %#v", id, got)
 	}

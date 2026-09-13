@@ -73,6 +73,18 @@ func AttachmentFromResult(netID domain.NetworkID, name, ifName string, aliases [
 // plugins set Sandbox on interfaces inside a sandbox (the container side);
 // host-side veth/bridge entries carry an empty Sandbox.
 func containerInterfaceMAC(result *types100.Result, preferred string) string {
+	if mac := interfaceMACByIPConfig(result); mac != "" {
+		return mac
+	}
+	if mac := sandboxInterfaceMAC(result.Interfaces, preferred); mac != "" {
+		return mac
+	}
+	return namedInterfaceMAC(result.Interfaces, preferred)
+}
+
+// interfaceMACByIPConfig resolves the MAC of the interface referenced by the
+// first IP config that points at a MAC-carrying result interface.
+func interfaceMACByIPConfig(result *types100.Result) string {
 	for _, ipConfig := range result.IPs {
 		if ipConfig == nil || ipConfig.Interface == nil {
 			continue
@@ -85,8 +97,14 @@ func containerInterfaceMAC(result *types100.Result, preferred string) string {
 			return intf.Mac
 		}
 	}
+	return ""
+}
+
+// sandboxInterfaceMAC prefers the sandbox interface named preferred, falling
+// back to the first sandbox MAC seen in result order.
+func sandboxInterfaceMAC(interfaces []*types100.Interface, preferred string) string {
 	fallback := ""
-	for _, intf := range result.Interfaces {
+	for _, intf := range interfaces {
 		if intf == nil || intf.Mac == "" || intf.Sandbox == "" {
 			continue
 		}
@@ -97,10 +115,13 @@ func containerInterfaceMAC(result *types100.Result, preferred string) string {
 			fallback = intf.Mac
 		}
 	}
-	if fallback != "" {
-		return fallback
-	}
-	for _, intf := range result.Interfaces {
+	return fallback
+}
+
+// namedInterfaceMAC returns the MAC of the first MAC-carrying interface named
+// preferred, host- or container-side.
+func namedInterfaceMAC(interfaces []*types100.Interface, preferred string) string {
+	for _, intf := range interfaces {
 		if intf != nil && intf.Mac != "" && intf.Name == preferred {
 			return intf.Mac
 		}

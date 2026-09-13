@@ -143,6 +143,14 @@ func TestContainerCreate_allocatesHostPortsAndPersistsIdentity(t *testing.T) {
 	service := testService(t, runtime, images, networks, &fakeTasks{pid: 1})
 	ctx := context.Background()
 
+	result := createWebContainerForIdentityTest(ctx, t, service)
+	assertCreateEffectsForIdentityTest(t, runtime, networks, result)
+	container := getPersistedContainerForIdentityTest(ctx, t, service, result.ID)
+	assertPersistedContainerForIdentityTest(t, container)
+}
+
+func createWebContainerForIdentityTest(ctx context.Context, t *testing.T, service *Service) ports.ContainerCreateResult {
+	t.Helper()
 	result, err := service.ContainerCreate(ctx, ports.ContainerCreateRequest{
 		Name:         "web",
 		Image:        "alpine:latest",
@@ -152,6 +160,11 @@ func TestContainerCreate_allocatesHostPortsAndPersistsIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ContainerCreate: %v", err)
 	}
+	return result
+}
+
+func assertCreateEffectsForIdentityTest(t *testing.T, runtime *fakeRuntime, networks *fakeNetworks, result ports.ContainerCreateResult) {
+	t.Helper()
 	if result.ID != runtime.createID {
 		t.Fatalf("expected created id %q, got %q", runtime.createID, result.ID)
 	}
@@ -167,10 +180,19 @@ func TestContainerCreate_allocatesHostPortsAndPersistsIdentity(t *testing.T) {
 	if got := runtime.createSpecs[0].Labels[containerCommandLabel]; got != `["/bin/sh","-c","echo hello"]` {
 		t.Fatalf("expected command label, got %q", got)
 	}
-	container, err := service.registry.Get(ctx, result.ID)
+}
+
+func getPersistedContainerForIdentityTest(ctx context.Context, t *testing.T, service *Service, id domain.ContainerID) domain.Container {
+	t.Helper()
+	container, err := service.registry.Get(ctx, id)
 	if err != nil {
 		t.Fatalf("registry get: %v", err)
 	}
+	return container
+}
+
+func assertPersistedContainerForIdentityTest(t *testing.T, container domain.Container) {
+	t.Helper()
 	if container.ImageDigest != "sha256:cafebabe" {
 		t.Fatalf("expected pinned digest, got %q", container.ImageDigest)
 	}

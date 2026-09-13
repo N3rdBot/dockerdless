@@ -87,14 +87,7 @@ func TestCreateReturnsStableDockerIDAndPersistsMetadata(t *testing.T) {
 	adapter, fake := newTestAdapter(t)
 	ctx := context.Background()
 
-	generatedA, err := adapter.Create(ctx, domain.ContainerSpec{Image: domain.ImageID(testImageRef)})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	generatedB, err := adapter.Create(ctx, domain.ContainerSpec{Image: domain.ImageID(testImageRef)})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	generatedA, generatedB := createGeneratedContainers(ctx, t, adapter)
 	if !dockerIDPattern.MatchString(string(generatedA)) {
 		t.Fatalf("generated id %q is not a 64-character hex Docker id", generatedA)
 	}
@@ -117,6 +110,24 @@ func TestCreateReturnsStableDockerIDAndPersistsMetadata(t *testing.T) {
 	if string(id) != explicitID {
 		t.Fatalf("CreateContainer id = %q, want stable explicit id %q", id, explicitID)
 	}
+	assertPersistedContainerMetadata(t, fake, explicitID)
+}
+
+func createGeneratedContainers(ctx context.Context, t *testing.T, adapter *Adapter) (domain.ContainerID, domain.ContainerID) {
+	t.Helper()
+	generatedA, err := adapter.Create(ctx, domain.ContainerSpec{Image: domain.ImageID(testImageRef)})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	generatedB, err := adapter.Create(ctx, domain.ContainerSpec{Image: domain.ImageID(testImageRef)})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return generatedA, generatedB
+}
+
+func assertPersistedContainerMetadata(t *testing.T, fake *fakeClient, explicitID string) {
+	t.Helper()
 	container := fake.container(explicitID)
 	if container == nil {
 		t.Fatalf("container %q was not persisted", explicitID)
@@ -127,6 +138,11 @@ func TestCreateReturnsStableDockerIDAndPersistsMetadata(t *testing.T) {
 	if container.snapshotKey != explicitID {
 		t.Fatalf("snapshot key = %q, want %q", container.snapshotKey, explicitID)
 	}
+	assertPersistedSpec(t, container, explicitID)
+}
+
+func assertPersistedSpec(t *testing.T, container *fakeContainer, explicitID string) {
+	t.Helper()
 	spec := container.spec
 	if spec == nil || spec.Process == nil {
 		t.Fatal("persisted OCI spec is missing")

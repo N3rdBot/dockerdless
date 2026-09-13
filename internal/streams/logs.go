@@ -143,6 +143,13 @@ func FindTailStart(f io.ReadSeeker, n int64) (int64, error) {
 	return 0, nil
 }
 
+// logReadState tracks follow-mode progress across polling iterations.
+type logReadState struct {
+	started  bool
+	offset   int64
+	lastStat os.FileInfo
+}
+
 // ReadLogs streams a container log file to stdout and stderr. A missing file
 // is an error unless Follow is set, in which case it is awaited. Rotation is
 // detected by inode change or truncation, and context cancellation ends a
@@ -151,64 +158,90 @@ func ReadLogs(ctx context.Context, path string, opts LogOptions, stdout, stderr 
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = defaultLogPollInterval
 	}
-	var (
-		started  bool
-		offset   int64
-		lastStat os.FileInfo
-	)
+	state := logReadState{}
 	for {
-		if ctx.Err() != nil {
-			if started {
-				if err := flushAvailableLogs(path, &offset, opts, stdout, stderr); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			if !opts.Follow {
-				return fmt.Errorf("streams: opening log file %q: %w", path, err)
-			}
-			if sleepErr := sleepCtx(ctx, opts.PollInterval); sleepErr == nil {
-				continue
-			}
-			// sleepCtx only fails when ctx is done, which ends the follow cleanly.
-			return nil
-		}
-		stat, statErr := file.Stat()
-		if statErr != nil {
-			_ = file.Close()
-			return fmt.Errorf("streams: stat %q: %w", path, statErr)
-		}
-		if !started {
-			offset, err = FindTailStart(file, int64(opts.Tail))
-			if err != nil {
-				_ = file.Close()
-				return fmt.Errorf("streams: tailing %q: %w", path, err)
-			}
-			started = true
-		} else if lastStat == nil || !os.SameFile(lastStat, stat) || stat.Size() < offset {
-			offset = 0
-		}
-		lastStat = stat
-
-		next, done, err := emitLogLines(file, offset, opts, stdout, stderr)
-		_ = file.Close()
-		offset = next
+		done, err := readLogsOnce(ctx, path, opts, &state, stdout, stderr)
 		if err != nil {
 			return err
 		}
-		if done || !opts.Follow {
-			return nil
-		}
-		if sleepErr := sleepCtx(ctx, opts.PollInterval); sleepErr != nil {
-			if err := flushAvailableLogs(path, &offset, opts, stdout, stderr); err != nil {
-				return err
-			}
+		if done {
 			return nil
 		}
 	}
+}
+
+// readLogsOnce performs a single polling iteration: it opens the log file,
+// repositions the offset, emits the available lines, and reports whether the
+// read is complete. In follow mode it sleeps before the next iteration.
+func readLogsOnce(ctx context.Context, path string, opts LogOptions, state *logReadState, stdout, stderr io.Writer) (bool, error) {
+	if ctx.Err() != nil {
+		return true, state.flush(path, opts, stdout, stderr)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return awaitLogFile(ctx, path, opts, err)
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return false, fmt.Errorf("streams: stat %q: %w", path, err)
+	}
+	if err := state.track(file, path, stat, opts); err != nil {
+		_ = file.Close()
+		return false, err
+	}
+	next, done, err := emitLogLines(file, state.offset, opts, stdout, stderr)
+	_ = file.Close()
+	state.offset = next
+	if err != nil {
+		return false, err
+	}
+	if done || !opts.Follow {
+		return true, nil
+	}
+	if sleepErr := sleepCtx(ctx, opts.PollInterval); sleepErr != nil {
+		return true, state.flush(path, opts, stdout, stderr)
+	}
+	return false, nil
+}
+
+// awaitLogFile handles a failed open: a missing file is fatal unless Follow is
+// set, in which case the read waits for the file to appear.
+func awaitLogFile(ctx context.Context, path string, opts LogOptions, openErr error) (bool, error) {
+	if !opts.Follow {
+		return false, fmt.Errorf("streams: opening log file %q: %w", path, openErr)
+	}
+	if sleepErr := sleepCtx(ctx, opts.PollInterval); sleepErr == nil {
+		return false, nil
+	}
+	// sleepCtx only fails when ctx is done, which ends the follow cleanly.
+	return true, nil
+}
+
+// track positions the read offset for a freshly opened file: the first open
+// applies the tail limit, later opens reset on rotation or truncation.
+func (s *logReadState) track(file *os.File, path string, stat os.FileInfo, opts LogOptions) error {
+	if !s.started {
+		offset, err := FindTailStart(file, int64(opts.Tail))
+		if err != nil {
+			return fmt.Errorf("streams: tailing %q: %w", path, err)
+		}
+		s.offset = offset
+		s.started = true
+	} else if s.lastStat == nil || !os.SameFile(s.lastStat, stat) || stat.Size() < s.offset {
+		s.offset = 0
+	}
+	s.lastStat = stat
+	return nil
+}
+
+// flush emits the lines that remain available before a context cancellation
+// ends the read.
+func (s *logReadState) flush(path string, opts LogOptions, stdout, stderr io.Writer) error {
+	if !s.started {
+		return nil
+	}
+	return flushAvailableLogs(path, &s.offset, opts, stdout, stderr)
 }
 
 func flushAvailableLogs(path string, offset *int64, opts LogOptions, stdout, stderr io.Writer) error {

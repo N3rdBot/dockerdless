@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	dockerspec "github.com/moby/docker-image-spec/specs-go/v1"
 	"github.com/moby/moby/api/types/image"
 
 	"github.com/N3rdBot/dockerdless/internal/ports"
@@ -62,6 +63,13 @@ func TestImageInspect_mapsImageConfigFields(t *testing.T) {
 	if config == nil {
 		t.Fatal("Config is nil")
 	}
+	assertImageConfigUserAndPorts(t, config)
+	assertImageConfigProcess(t, config)
+	assertImageConfigPathsAndLabels(t, config)
+}
+
+func assertImageConfigUserAndPorts(t *testing.T, config *dockerspec.DockerOCIImageConfig) {
+	t.Helper()
 	if config.User != "1000:1000" {
 		t.Fatalf("Config.User = %q, want 1000:1000", config.User)
 	}
@@ -71,6 +79,10 @@ func TestImageInspect_mapsImageConfigFields(t *testing.T) {
 	if _, ok := config.ExposedPorts["8080/tcp"]; !ok {
 		t.Fatalf("Config.ExposedPorts = %v, want 8080/tcp", config.ExposedPorts)
 	}
+}
+
+func assertImageConfigProcess(t *testing.T, config *dockerspec.DockerOCIImageConfig) {
+	t.Helper()
 	if len(config.Env) != 1 || config.Env[0] != "DLS_COMPAT_ENV=present" {
 		t.Fatalf("Config.Env = %v, want [DLS_COMPAT_ENV=present]", config.Env)
 	}
@@ -80,6 +92,10 @@ func TestImageInspect_mapsImageConfigFields(t *testing.T) {
 	if len(config.Cmd) != 2 || config.Cmd[0] != "serve" || config.Cmd[1] != "8080" {
 		t.Fatalf("Config.Cmd = %v, want [serve 8080]", config.Cmd)
 	}
+}
+
+func assertImageConfigPathsAndLabels(t *testing.T, config *dockerspec.DockerOCIImageConfig) {
+	t.Helper()
 	if _, ok := config.Volumes["/data"]; !ok {
 		t.Fatalf("Config.Volumes = %v, want /data", config.Volumes)
 	}

@@ -8,47 +8,42 @@ import (
 func TestDefaultsIncludeAllRuntimeFields(t *testing.T) {
 	cfg := Defaults()
 
-	if cfg.SocketPath != DefaultSocketPath {
-		t.Fatalf("socket path = %q, want %q", cfg.SocketPath, DefaultSocketPath)
-	}
-	if cfg.LogLevel != DefaultLogLevel {
-		t.Fatalf("log level = %q, want %q", cfg.LogLevel, DefaultLogLevel)
-	}
-	if cfg.OTelServiceName != DefaultOTelServiceName {
-		t.Fatalf("OTel service name = %q, want %q", cfg.OTelServiceName, DefaultOTelServiceName)
-	}
-	if cfg.OTelEndpoint != DefaultOTelEndpoint {
-		t.Fatalf("OTel endpoint = %q, want %q", cfg.OTelEndpoint, DefaultOTelEndpoint)
-	}
-	if cfg.ContainerdNamespace != DefaultContainerdNamespace {
-		t.Fatalf("containerd namespace = %q, want %q", cfg.ContainerdNamespace, DefaultContainerdNamespace)
-	}
-	if cfg.ContainerdSocket != DefaultContainerdSocket {
-		t.Fatalf("containerd socket = %q, want %q", cfg.ContainerdSocket, DefaultContainerdSocket)
-	}
-	if cfg.CNIConfigDir != DefaultCNIConfigDir {
-		t.Fatalf("CNI config dir = %q, want %q", cfg.CNIConfigDir, DefaultCNIConfigDir)
-	}
-	if cfg.CNIPluginDir != DefaultCNIPluginDir {
-		t.Fatalf("CNI plugin dir = %q, want %q", cfg.CNIPluginDir, DefaultCNIPluginDir)
-	}
-	if cfg.BuildKitSocket != DefaultBuildKitSocket {
-		t.Fatalf("BuildKit socket = %q, want %q", cfg.BuildKitSocket, DefaultBuildKitSocket)
-	}
-	if cfg.DefaultStopTimeout != DefaultStopTimeout {
-		t.Fatalf("stop timeout = %s, want %s", cfg.DefaultStopTimeout, DefaultStopTimeout)
-	}
-	if cfg.RequestTimeout != DefaultRequestTimeout {
-		t.Fatalf("request timeout = %s, want %s", cfg.RequestTimeout, DefaultRequestTimeout)
-	}
-	if cfg.EnableCRI != DefaultEnableCRI {
-		t.Fatalf("enable CRI = %t, want %t", cfg.EnableCRI, DefaultEnableCRI)
-	}
-	if cfg.EnableRootless != DefaultEnableRootless {
-		t.Fatalf("enable rootless = %t, want %t", cfg.EnableRootless, DefaultEnableRootless)
-	}
+	assertStringDefault(t, "socket path", cfg.SocketPath, DefaultSocketPath)
+	assertStringDefault(t, "log level", cfg.LogLevel, DefaultLogLevel)
+	assertStringDefault(t, "OTel service name", cfg.OTelServiceName, DefaultOTelServiceName)
+	assertStringDefault(t, "OTel endpoint", cfg.OTelEndpoint, DefaultOTelEndpoint)
+	assertStringDefault(t, "containerd namespace", cfg.ContainerdNamespace, DefaultContainerdNamespace)
+	assertStringDefault(t, "containerd socket", cfg.ContainerdSocket, DefaultContainerdSocket)
+	assertStringDefault(t, "CNI config dir", cfg.CNIConfigDir, DefaultCNIConfigDir)
+	assertStringDefault(t, "CNI plugin dir", cfg.CNIPluginDir, DefaultCNIPluginDir)
+	assertStringDefault(t, "BuildKit socket", cfg.BuildKitSocket, DefaultBuildKitSocket)
+	assertDurationDefault(t, "stop timeout", cfg.DefaultStopTimeout, DefaultStopTimeout)
+	assertDurationDefault(t, "request timeout", cfg.RequestTimeout, DefaultRequestTimeout)
+	assertBoolDefault(t, "enable CRI", cfg.EnableCRI, DefaultEnableCRI)
+	assertBoolDefault(t, "enable rootless", cfg.EnableRootless, DefaultEnableRootless)
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("default config validation failed: %v", err)
+	}
+}
+
+func assertStringDefault(t *testing.T, name, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %q, want %q", name, got, want)
+	}
+}
+
+func assertDurationDefault(t *testing.T, name string, got, want time.Duration) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %s, want %s", name, got, want)
+	}
+}
+
+func assertBoolDefault(t *testing.T, name string, got, want bool) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s = %t, want %t", name, got, want)
 	}
 }
 

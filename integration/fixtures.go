@@ -95,7 +95,7 @@ func looksLikeConnectivityFailure(err error) bool {
 // directory. The scratch-based Dockerfile therefore never needs registry
 // access, whether it is built through POST /build or through testcontainers'
 // FromDockerfile.
-func fixtureContextDir(t *testing.T) string {
+func fixtureContextDir(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	root, err := moduleRoot()
 	if err != nil {
@@ -120,7 +120,7 @@ func fixtureContextDir(t *testing.T) string {
 	}
 
 	helperPath := filepath.Join(contextDir, "dls-helper")
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", helperPath, "./integration/fixtures/helper")
+	build := exec.CommandContext(ctx, "go", "build", "-o", helperPath, "./integration/fixtures/helper")
 	build.Dir = root
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := build.CombinedOutput(); err != nil {
@@ -131,14 +131,14 @@ func fixtureContextDir(t *testing.T) string {
 
 // fixtureContextTar assembles the POST /build context from the staged fixture
 // directory and returns the tar stream plus the fixtures source dir.
-func fixtureContextTar(t *testing.T) (io.Reader, string) {
+func fixtureContextTar(ctx context.Context, t *testing.T) (io.Reader, string) {
 	t.Helper()
 	root, err := moduleRoot()
 	if err != nil {
 		t.Fatalf("locate module root: %v", err)
 	}
 	fixturesDir := filepath.Join(root, "integration", "fixtures")
-	contextDir := fixtureContextDir(t)
+	contextDir := fixtureContextDir(ctx, t)
 	contextRoot, err := os.OpenRoot(contextDir)
 	if err != nil {
 		t.Fatalf("open fixture context root %s: %v", contextDir, err)

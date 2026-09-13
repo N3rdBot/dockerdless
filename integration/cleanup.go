@@ -147,14 +147,24 @@ func sweepAdapterState(ctx context.Context, containerdSocket, namespace, namePre
 }
 
 func forceRemoveContainer(ctx context.Context, client *containerd.Client, container containerd.Container) error {
-	if task, err := container.Task(ctx, nil); err == nil {
+	if err := killAndDeleteContainerTask(ctx, container); err != nil {
+		return err
+	}
+	return removeContainerRecordAndSnapshot(ctx, client, container)
+}
+
+// killAndDeleteContainerTask SIGKILLs a running task and polls task.Delete
+// until the task record settles or sweepTimeout expires.
+func killAndDeleteContainerTask(ctx context.Context, container containerd.Container) error {
+	task, err := container.Task(ctx, nil)
+	if err == nil {
 		if status, statusErr := task.Status(ctx); statusErr == nil && status.Status == containerd.Running {
 			_ = task.Kill(ctx, syscall.SIGKILL)
 		}
 		deadline := time.Now().Add(sweepTimeout)
 		for {
 			if _, err := task.Delete(ctx); err == nil || errdefs.IsNotFound(err) {
-				break
+				return nil
 			}
 			if time.Now().After(deadline) {
 				return fmt.Errorf("task %s did not settle after SIGKILL", container.ID())
@@ -162,7 +172,12 @@ func forceRemoveContainer(ctx context.Context, client *containerd.Client, contai
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+	return nil // no task recorded; nothing to kill or delete
+}
 
+// removeContainerRecordAndSnapshot deletes the container record and its
+// snapshot, tolerating records a concurrent sweep already removed.
+func removeContainerRecordAndSnapshot(ctx context.Context, client *containerd.Client, container containerd.Container) error {
 	info, err := container.Info(ctx)
 	if err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("inspect container %s: %w", container.ID(), err)
@@ -170,10 +185,11 @@ func forceRemoveContainer(ctx context.Context, client *containerd.Client, contai
 	if err := container.Delete(ctx); err != nil && !errdefs.IsNotFound(err) {
 		return fmt.Errorf("delete container %s: %w", container.ID(), err)
 	}
-	if info.SnapshotKey != "" {
-		if err := client.SnapshotService(info.Snapshotter).Remove(ctx, info.SnapshotKey); err != nil && !errdefs.IsNotFound(err) {
-			return fmt.Errorf("remove snapshot %s: %w", info.SnapshotKey, err)
-		}
+	if info.SnapshotKey == "" {
+		return nil
+	}
+	if err := client.SnapshotService(info.Snapshotter).Remove(ctx, info.SnapshotKey); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("remove snapshot %s: %w", info.SnapshotKey, err)
 	}
 	return nil
 }

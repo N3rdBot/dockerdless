@@ -160,6 +160,14 @@ func TestCreateListResolveRemoveNetwork(t *testing.T) {
 	adapter, _, dir := newTestAdapter(t)
 	ctx := context.Background()
 
+	id := createWebNetwork(ctx, t, adapter, dir)
+	assertListsWebNetwork(ctx, t, adapter)
+	assertResolvesWebNetwork(ctx, t, adapter, id)
+	removeWebNetwork(ctx, t, adapter, id, dir)
+}
+
+func createWebNetwork(ctx context.Context, t *testing.T, adapter *cni.Adapter, dir string) domain.NetworkID {
+	t.Helper()
 	id, err := adapter.Create(ctx, "web")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -174,7 +182,11 @@ func TestCreateListResolveRemoveNetwork(t *testing.T) {
 	if _, err := adapter.Create(ctx, "web"); !errors.Is(err, cni.ErrNetworkExists) {
 		t.Fatalf("duplicate Create = %v, want ErrNetworkExists", err)
 	}
+	return id
+}
 
+func assertListsWebNetwork(ctx context.Context, t *testing.T, adapter *cni.Adapter) {
+	t.Helper()
 	list, err := adapter.List(ctx)
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -188,7 +200,10 @@ func TestCreateListResolveRemoveNetwork(t *testing.T) {
 	if list[0].Bridge == "" || list[0].Bridge[:3] != "dls" {
 		t.Fatalf("bridge = %q, want dls*", list[0].Bridge)
 	}
+}
 
+func assertResolvesWebNetwork(ctx context.Context, t *testing.T, adapter *cni.Adapter, id domain.NetworkID) {
+	t.Helper()
 	byID, err := adapter.Resolve(ctx, string(id))
 	if err != nil || byID.Name != "web" {
 		t.Fatalf("Resolve(id) = %+v, %v", byID, err)
@@ -197,7 +212,11 @@ func TestCreateListResolveRemoveNetwork(t *testing.T) {
 	if err != nil || byPrefix.Name != "web" {
 		t.Fatalf("Resolve(prefix) = %+v, %v", byPrefix, err)
 	}
+}
 
+func removeWebNetwork(ctx context.Context, t *testing.T, adapter *cni.Adapter, id domain.NetworkID, dir string) {
+	t.Helper()
+	file := filepath.Join(dir, "dockerdless-web.conflist")
 	if err := adapter.Remove(ctx, id); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
@@ -309,6 +328,13 @@ func TestConnectAllocatesPortsBeforeCNI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
+	assertConnectSentPortMappings(t, fake)
+	assertConnectPublishedBindings(t, result.Ports)
+	assertConnectAttachment(t, result.Attachment)
+}
+
+func assertConnectSentPortMappings(t *testing.T, fake *fakeCNI) {
+	t.Helper()
 	if fake.addCalls != 1 {
 		t.Fatalf("addCalls = %d, want 1", fake.addCalls)
 	}
@@ -327,12 +353,19 @@ func TestConnectAllocatesPortsBeforeCNI(t *testing.T) {
 			t.Fatalf("CNI portmap received host port 0: %+v", mapping)
 		}
 	}
-	for _, binding := range result.Ports {
+}
+
+func assertConnectPublishedBindings(t *testing.T, bindings []domain.PortBinding) {
+	t.Helper()
+	for _, binding := range bindings {
 		if binding.HostPort == 0 {
 			t.Fatalf("published binding has host port 0: %+v", binding)
 		}
 	}
-	attachment := result.Attachment
+}
+
+func assertConnectAttachment(t *testing.T, attachment domain.NetworkAttachment) {
+	t.Helper()
 	if attachment.IPAddress != "10.88.0.5" || attachment.Gateway != "10.88.0.1" {
 		t.Fatalf("attachment ip/gw = %s/%s", attachment.IPAddress, attachment.Gateway)
 	}

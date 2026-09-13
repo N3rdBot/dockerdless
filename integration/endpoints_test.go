@@ -116,6 +116,20 @@ func TestDaemonNetworkLifecycle(t *testing.T) {
 	defer cancel()
 	api := daemon.Client()
 
+	assertDefaultNetworks(ctx, t, api, daemon)
+
+	name := uniqueName(t, "network")
+	networkID := createTestNetwork(ctx, t, api, daemon, name)
+	conflistPath := filepath.Join(daemon.CNIConfigDir(), "dockerdless-"+name+".conflist")
+	assertNetworkInspect(ctx, t, api, networkID, name, conflistPath)
+
+	removeNetworkAndAssertGone(ctx, t, api, daemon, networkID, name, conflistPath)
+}
+
+// assertDefaultNetworks pins the bridge, host, and none networks the daemon
+// must always list.
+func assertDefaultNetworks(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess) {
+	t.Helper()
 	defaults, err := api.NetworkList(ctx, client.NetworkListOptions{})
 	if err != nil {
 		t.Fatalf("NetworkList: %v\n--- daemon logs ---\n%s", err, daemon.Logs())
@@ -130,8 +144,11 @@ func TestDaemonNetworkLifecycle(t *testing.T) {
 		}
 	}
 	t.Logf("default networks: %v", names)
+}
 
-	name := uniqueName(t, "network")
+// createTestNetwork creates a bridge network and registers its removal.
+func createTestNetwork(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, name string) string {
+	t.Helper()
 	created, err := api.NetworkCreate(ctx, name, client.NetworkCreateOptions{Driver: "bridge"})
 	if err != nil {
 		t.Fatalf("NetworkCreate(%s): %v\n--- daemon logs ---\n%s", name, err, daemon.Logs())
@@ -142,13 +159,19 @@ func TestDaemonNetworkLifecycle(t *testing.T) {
 		}
 		return nil
 	})
+	return created.ID
+}
 
-	inspect, err := api.NetworkInspect(ctx, created.ID, client.NetworkInspectOptions{})
+// assertNetworkInspect pins the created network's ID, name, and driver, and its
+// conflist on disk.
+func assertNetworkInspect(ctx context.Context, t *testing.T, api *client.Client, networkID, name, conflistPath string) {
+	t.Helper()
+	inspect, err := api.NetworkInspect(ctx, networkID, client.NetworkInspectOptions{})
 	if err != nil {
-		t.Fatalf("NetworkInspect(%s): %v", created.ID, err)
+		t.Fatalf("NetworkInspect(%s): %v", networkID, err)
 	}
-	if inspect.Network.ID != created.ID {
-		t.Fatalf("NetworkInspect ID = %q, want %q", inspect.Network.ID, created.ID)
+	if inspect.Network.ID != networkID {
+		t.Fatalf("NetworkInspect ID = %q, want %q", inspect.Network.ID, networkID)
 	}
 	if inspect.Network.Name != name {
 		t.Fatalf("NetworkInspect Name = %q, want %q", inspect.Network.Name, name)
@@ -156,14 +179,18 @@ func TestDaemonNetworkLifecycle(t *testing.T) {
 	if inspect.Network.Driver != "bridge" {
 		t.Fatalf("NetworkInspect Driver = %q, want bridge", inspect.Network.Driver)
 	}
-	conflistPath := filepath.Join(daemon.CNIConfigDir(), "dockerdless-"+name+".conflist")
 	if _, err := os.Stat(conflistPath); err != nil {
 		t.Fatalf("network conflist %s missing: %v", conflistPath, err)
 	}
-	t.Logf("network %s (%s) created; conflist=%s", name, created.ID, conflistPath)
+	t.Logf("network %s (%s) created; conflist=%s", name, networkID, conflistPath)
+}
 
-	if _, err := api.NetworkRemove(ctx, created.ID, client.NetworkRemoveOptions{}); err != nil {
-		t.Fatalf("NetworkRemove(%s): %v\n--- daemon logs ---\n%s", created.ID, err, daemon.Logs())
+// removeNetworkAndAssertGone removes the network and proves its conflist and
+// list entry are gone.
+func removeNetworkAndAssertGone(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, networkID, name, conflistPath string) {
+	t.Helper()
+	if _, err := api.NetworkRemove(ctx, networkID, client.NetworkRemoveOptions{}); err != nil {
+		t.Fatalf("NetworkRemove(%s): %v\n--- daemon logs ---\n%s", networkID, err, daemon.Logs())
 	}
 	if _, err := os.Stat(conflistPath); !os.IsNotExist(err) {
 		t.Fatalf("network conflist %s still present after removal (stat error %v)", conflistPath, err)
@@ -188,7 +215,19 @@ func TestDaemonBuildFromFixture(t *testing.T) {
 	defer cancel()
 	api := daemon.Client()
 
-	contextTar, fixturesDir := fixtureContextTar(t)
+	tag := buildFixtureImage(ctx, t, api, daemon)
+	daemon.cleanups.add("remove built image "+tag, func(ctx context.Context) error {
+		return removeImageFromContainerd(ctx, daemon.containerdSocket, daemon.namespace, tag)
+	})
+	imageID := assertBuiltImageTagged(ctx, t, api, tag)
+	runBuiltImageAndAssertMarker(ctx, t, api, daemon, tag, imageID)
+}
+
+// buildFixtureImage streams the fixture context through POST /build and pins
+// the build stream's error and image-id envelopes.
+func buildFixtureImage(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess) string {
+	t.Helper()
+	contextTar, fixturesDir := fixtureContextTar(ctx, t)
 	tag := fmt.Sprintf("docker.io/library/%s:latest", uniqueName(t, "built"))
 	build, err := api.ImageBuild(ctx, contextTar, client.ImageBuildOptions{
 		Tags:   []string{tag},
@@ -209,11 +248,13 @@ func TestDaemonBuildFromFixture(t *testing.T) {
 		t.Fatalf("build stream carried no aux image id:\n%s", stream)
 	}
 	t.Logf("build fixture %s completed with %d stream bytes", fixturesDir, len(stream))
+	return tag
+}
 
-	daemon.cleanups.add("remove built image "+tag, func(ctx context.Context) error {
-		return removeImageFromContainerd(ctx, daemon.containerdSocket, daemon.namespace, tag)
-	})
-
+// assertBuiltImageTagged inspects the built tag and returns the image ID after
+// pinning its RepoTags.
+func assertBuiltImageTagged(ctx context.Context, t *testing.T, api *client.Client, tag string) string {
+	t.Helper()
 	inspect, err := api.ImageInspect(ctx, tag)
 	if err != nil {
 		t.Fatalf("ImageInspect(%s): %v", tag, err)
@@ -231,7 +272,13 @@ func TestDaemonBuildFromFixture(t *testing.T) {
 	if !tagged {
 		t.Fatalf("built image RepoTags = %v, want %q", inspect.RepoTags, tag)
 	}
+	return inspect.ID
+}
 
+// runBuiltImageAndAssertMarker runs the built image and reads the marker file
+// its entrypoint copied in.
+func runBuiltImageAndAssertMarker(ctx context.Context, t *testing.T, api *client.Client, daemon *daemonProcess, tag, imageID string) {
+	t.Helper()
 	name := uniqueName(t, "built-run")
 	created, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: name,
@@ -256,10 +303,10 @@ func TestDaemonBuildFromFixture(t *testing.T) {
 	if _, err := api.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		t.Fatalf("ContainerStart(%s): %v\n--- daemon logs ---\n%s", created.ID, err, daemon.Logs())
 	}
-	waitForContainerState(t, api, created.ID, false)
-	stdout, stderr := readContainerLogs(t, api, created.ID, "dockerdless-build-fixture")
+	waitForContainerState(ctx, t, api, created.ID, false)
+	stdout, stderr := readContainerLogs(ctx, t, api, created.ID, "dockerdless-build-fixture")
 	if !strings.Contains(stdout, "dockerdless-build-fixture") {
 		t.Fatalf("built image logs = %q (stderr %q), want the marker file contents", stdout, stderr)
 	}
-	t.Logf("built image ran: id=%s stdout=%q", inspect.ID, strings.TrimSpace(stdout))
+	t.Logf("built image ran: id=%s stdout=%q", imageID, strings.TrimSpace(stdout))
 }

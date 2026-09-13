@@ -201,7 +201,34 @@ func exposedPortsPublished(exposed network.PortSet, hostConfig *container.HostCo
 	return true
 }
 
+// hostConfigFieldValidators apply the HostConfig field policy in a fixed
+// order: the first rejected field decides the response, so each validator owns
+// one contiguous run of the original switch and the slice order preserves the
+// original precedence between runs.
+var hostConfigFieldValidators = []func(*container.HostConfig) *DockerError{
+	validateHostConfigPrivilegeFields,
+	validateHostConfigPolicyFields,
+	validateHostConfigNamespaceFields,
+	validateHostConfigHardeningFields,
+	validateHostConfigRuntimeFields,
+	validateHostConfigHostPathFields,
+}
+
 func validateHostConfigFields(hostConfig *container.HostConfig) *DockerError {
+	for _, validate := range hostConfigFieldValidators {
+		if apiErr := validate(hostConfig); apiErr != nil {
+			return apiErr
+		}
+	}
+	if apiErr := validateStructuredMounts(hostConfig.Mounts); apiErr != nil {
+		return apiErr
+	}
+	return validateBinds(hostConfig.Binds)
+}
+
+// validateHostConfigPrivilegeFields rejects fields that would widen the
+// container's privileges beyond what the daemon implements.
+func validateHostConfigPrivilegeFields(hostConfig *container.HostConfig) *DockerError {
 	switch {
 	case hostConfig.Privileged:
 		return NewNotImplemented("HostConfig.Privileged is not supported")
@@ -213,12 +240,27 @@ func validateHostConfigFields(hostConfig *container.HostConfig) *DockerError {
 		return NewNotImplemented("HostConfig.Devices is not supported")
 	case hostConfig.ReadonlyRootfs:
 		return NewNotImplemented("HostConfig.ReadonlyRootfs is not supported")
+	}
+	return nil
+}
+
+// validateHostConfigPolicyFields rejects the resource aggregate, the restart
+// policy, and security options as whole units.
+func validateHostConfigPolicyFields(hostConfig *container.HostConfig) *DockerError {
+	switch {
 	case !reflect.DeepEqual(hostConfig.Resources, container.Resources{}):
 		return NewNotImplemented("HostConfig.Resources is not supported")
 	case hostConfig.RestartPolicy.Name != "" || hostConfig.RestartPolicy.MaximumRetryCount != 0:
 		return NewNotImplemented("HostConfig.RestartPolicy is not supported")
 	case len(hostConfig.SecurityOpt) > 0:
 		return NewNotImplemented("HostConfig.SecurityOpt is not supported")
+	}
+	return nil
+}
+
+// validateHostConfigNamespaceFields rejects every namespace override.
+func validateHostConfigNamespaceFields(hostConfig *container.HostConfig) *DockerError {
+	switch {
 	case hostConfig.PidMode != "":
 		return NewNotImplemented("HostConfig.PidMode is not supported")
 	case hostConfig.IpcMode != "":
@@ -229,12 +271,27 @@ func validateHostConfigFields(hostConfig *container.HostConfig) *DockerError {
 		return NewNotImplemented("HostConfig.UsernsMode is not supported")
 	case hostConfig.CgroupnsMode != "":
 		return NewNotImplemented("HostConfig.CgroupnsMode is not supported")
+	}
+	return nil
+}
+
+// validateHostConfigHardeningFields rejects kernel-level hardening knobs.
+func validateHostConfigHardeningFields(hostConfig *container.HostConfig) *DockerError {
+	switch {
 	case len(hostConfig.Sysctls) > 0:
 		return NewNotImplemented("HostConfig.Sysctls is not supported")
 	case len(hostConfig.MaskedPaths) > 0:
 		return NewNotImplemented("HostConfig.MaskedPaths is not supported")
 	case len(hostConfig.ReadonlyPaths) > 0:
 		return NewNotImplemented("HostConfig.ReadonlyPaths is not supported")
+	}
+	return nil
+}
+
+// validateHostConfigRuntimeFields rejects runtime selection and per-container
+// host visibility overrides. The default runtime is the only accepted Runtime.
+func validateHostConfigRuntimeFields(hostConfig *container.HostConfig) *DockerError {
+	switch {
 	case hostConfig.Runtime != "" && hostConfig.Runtime != defaultContainerRuntime:
 		return NewNotImplemented("HostConfig.Runtime is not supported")
 	case len(hostConfig.VolumesFrom) > 0:
@@ -243,6 +300,14 @@ func validateHostConfigFields(hostConfig *container.HostConfig) *DockerError {
 		return NewNotImplemented("HostConfig.OomScoreAdj is not supported")
 	case hostConfig.ContainerIDFile != "":
 		return NewNotImplemented("HostConfig.ContainerIDFile is not supported")
+	}
+	return nil
+}
+
+// validateHostConfigHostPathFields rejects host-path, daemon-reference, and
+// cgroup overrides.
+func validateHostConfigHostPathFields(hostConfig *container.HostConfig) *DockerError {
+	switch {
 	case hostConfig.VolumeDriver != "":
 		return NewNotImplemented("HostConfig.VolumeDriver is not supported")
 	case len(hostConfig.Annotations) > 0:
@@ -256,10 +321,7 @@ func validateHostConfigFields(hostConfig *container.HostConfig) *DockerError {
 	case hostConfig.Umask != nil:
 		return NewNotImplemented("HostConfig.Umask is not supported")
 	}
-	if apiErr := validateStructuredMounts(hostConfig.Mounts); apiErr != nil {
-		return apiErr
-	}
-	return validateBinds(hostConfig.Binds)
+	return nil
 }
 
 // validateStructuredMounts rejects HostConfig.Mounts entries whose type is not

@@ -20,6 +20,17 @@ func TestStorePublishesValidReplacementAndRetainsInvalidReplacement(t *testing.T
 		t.Fatalf("write initial config: %v", err)
 	}
 
+	store, errorsSeen, changesSeen := startReloadTestStore(t, configPath)
+	waitForSnapshot(t, store, func(cfg Config) bool {
+		return cfg.SocketPath == "/tmp/dockerdless-initial.sock"
+	})
+
+	reloaded := publishValidReplacement(t, store, configPath, changesSeen)
+	assertInvalidReplacementRetained(t, store, configPath, errorsSeen, reloaded)
+}
+
+func startReloadTestStore(t *testing.T, configPath string) (*Store, <-chan error, <-chan fsnotify.Event) {
+	t.Helper()
 	store := NewStoreWithConfigFile(configPath)
 	errorsSeen := make(chan error, 4)
 	changesSeen := make(chan fsnotify.Event, 4)
@@ -43,11 +54,11 @@ func TestStorePublishesValidReplacementAndRetainsInvalidReplacement(t *testing.T
 			t.Errorf("close config watch: %v", err)
 		}
 	})
+	return store, errorsSeen, changesSeen
+}
 
-	waitForSnapshot(t, store, func(cfg Config) bool {
-		return cfg.SocketPath == "/tmp/dockerdless-initial.sock"
-	})
-
+func publishValidReplacement(t *testing.T, store *Store, configPath string, changesSeen <-chan fsnotify.Event) Config {
+	t.Helper()
 	if err := writeConfigAtomically(configPath, "socket-path: /tmp/dockerdless-reloaded.sock\nlog-level: debug\n"); err != nil {
 		t.Fatalf("write valid replacement: %v", err)
 	}
@@ -62,7 +73,11 @@ func TestStorePublishesValidReplacementAndRetainsInvalidReplacement(t *testing.T
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for config change callback")
 	}
+	return reloaded
+}
 
+func assertInvalidReplacementRetained(t *testing.T, store *Store, configPath string, errorsSeen <-chan error, reloaded Config) {
+	t.Helper()
 	if err := writeConfigAtomically(configPath, "socket-path: [\n"); err != nil {
 		t.Fatalf("write invalid replacement: %v", err)
 	}
@@ -74,7 +89,6 @@ func TestStorePublishesValidReplacementAndRetainsInvalidReplacement(t *testing.T
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for invalid replacement error")
 	}
-
 	if got := store.Current(); got != reloaded {
 		t.Fatalf("invalid replacement changed snapshot: got %#v, want %#v", got, reloaded)
 	}

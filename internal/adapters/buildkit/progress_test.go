@@ -15,6 +15,18 @@ func TestProgressWriterEmitsValidDockerJSON(t *testing.T) {
 	var out bytes.Buffer
 	writer := NewProgressWriter(&out)
 
+	writeAllProgressMessages(t, writer)
+
+	messages := decodeDockerStream(t, out.Bytes())
+	if len(messages) != 4 {
+		t.Fatalf("decoded %d messages, want 4: %s", len(messages), out.String())
+	}
+	assertProgressMessageContents(t, messages)
+	assertEveryLineIsValidJSON(t, out.String())
+}
+
+func writeAllProgressMessages(t *testing.T, writer *ProgressWriter) {
+	t.Helper()
 	if err := writer.Stream("plain text\n"); err != nil {
 		t.Fatalf("Stream() error = %v", err)
 	}
@@ -30,11 +42,10 @@ func TestProgressWriterEmitsValidDockerJSON(t *testing.T) {
 	if !writer.Written() {
 		t.Fatal("Written() = false, want true")
 	}
+}
 
-	messages := decodeDockerStream(t, out.Bytes())
-	if len(messages) != 4 {
-		t.Fatalf("decoded %d messages, want 4: %s", len(messages), out.String())
-	}
+func assertProgressMessageContents(t *testing.T, messages []dockerMessage) {
+	t.Helper()
 	if messages[0].Stream != "plain text\n" {
 		t.Fatalf("stream = %q", messages[0].Stream)
 	}
@@ -53,10 +64,13 @@ func TestProgressWriterEmitsValidDockerJSON(t *testing.T) {
 	if messages[3].ErrorMessage != "boom" {
 		t.Fatalf("legacy error mirror = %q, want boom", messages[3].ErrorMessage)
 	}
+}
 
-	var raw map[string]json.RawMessage
-	for line := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
-		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+func assertEveryLineIsValidJSON(t *testing.T, raw string) {
+	t.Helper()
+	var decoded map[string]json.RawMessage
+	for line := range strings.SplitSeq(strings.TrimSpace(raw), "\n") {
+		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
 			t.Fatalf("line %q invalid JSON: %v", line, err)
 		}
 	}

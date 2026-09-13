@@ -48,7 +48,12 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	t.Cleanup(func() { cleanupIntegration(t, client, adapter, created) })
 
 	imageRef := integrationImage(ctx, t, client)
+	integrationShortContainer(ctx, t, adapter, imageRef, &created)
+	integrationLongContainer(ctx, t, adapter, imageRef, &created)
+}
 
+func integrationShortContainer(ctx context.Context, t *testing.T, adapter *Adapter, imageRef string, created *[]domain.ContainerID) {
+	t.Helper()
 	shortID, err := adapter.CreateContainer(ctx, Config{
 		Name:       "dockerdless-it-short",
 		Image:      domain.ImageID(imageRef),
@@ -58,7 +63,7 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("integration: create short container: %v", err)
 	}
-	created = append(created, shortID)
+	*created = append(*created, shortID)
 	if _, err := adapter.CreateContainer(ctx, Config{
 		Name:  "dockerdless-it-short",
 		Image: domain.ImageID(imageRef),
@@ -75,13 +80,16 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	if wait.ExitCode != 0 {
 		t.Fatalf("integration: short container exit code = %d, want 0", wait.ExitCode)
 	}
-	if state := integrationState(t, adapter, shortID); state != domain.ContainerStateExited {
+	if state := integrationState(ctx, t, adapter, shortID); state != domain.ContainerStateExited {
 		t.Fatalf("integration: short container state = %q, want exited", state)
 	}
 	if err := adapter.Remove(ctx, shortID); err != nil {
 		t.Fatalf("integration: remove short container: %v", err)
 	}
+}
 
+func integrationLongContainer(ctx context.Context, t *testing.T, adapter *Adapter, imageRef string, created *[]domain.ContainerID) {
+	t.Helper()
 	longID, err := adapter.CreateContainer(ctx, Config{
 		Name:       "dockerdless-it-long",
 		Image:      domain.ImageID(imageRef),
@@ -91,13 +99,32 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("integration: create long container: %v", err)
 	}
-	created = append(created, longID)
+	*created = append(*created, longID)
 	if err := adapter.Start(ctx, longID); err != nil {
 		t.Fatalf("integration: start long container: %v", err)
 	}
-	integrationWaitForState(t, adapter, longID, domain.ContainerStateRunning)
+	integrationWaitForState(ctx, t, adapter, longID, domain.ContainerStateRunning)
 
-	execResult, err := adapter.Exec(ctx, longID, ExecConfig{Command: []string{"/bin/sh", "-c", "exit 7"}})
+	integrationExecExitCode(ctx, t, adapter, longID)
+
+	stopStarted := time.Now()
+	if err := adapter.Stop(ctx, longID, time.Second); err != nil {
+		t.Fatalf("integration: stop long container: %v", err)
+	}
+	if elapsed := time.Since(stopStarted); elapsed < 900*time.Millisecond {
+		t.Fatalf("integration: stop escalated after %v, before the timeout", elapsed)
+	}
+	integrationWaitForState(ctx, t, adapter, longID, domain.ContainerStateExited)
+	if err := adapter.Remove(ctx, longID); err != nil {
+		t.Fatalf("integration: remove long container: %v", err)
+	}
+}
+
+// integrationExecExitCode runs an exec that exits 7 and verifies both the exec
+// result and the recorded exec state.
+func integrationExecExitCode(ctx context.Context, t *testing.T, adapter *Adapter, id domain.ContainerID) {
+	t.Helper()
+	execResult, err := adapter.Exec(ctx, id, ExecConfig{Command: []string{"/bin/sh", "-c", "exit 7"}})
 	if err != nil {
 		t.Fatalf("integration: exec: %v", err)
 	}
@@ -107,18 +134,6 @@ func TestIntegrationContainerLifecycle(t *testing.T) {
 	record, ok := adapter.ExecRecord(execResult.ID)
 	if !ok || record.ExitCode == nil || *record.ExitCode != 7 {
 		t.Fatalf("integration: recorded exec = %+v, want exit code 7", record)
-	}
-
-	stopStarted := time.Now()
-	if err := adapter.Stop(ctx, longID, time.Second); err != nil {
-		t.Fatalf("integration: stop long container: %v", err)
-	}
-	if elapsed := time.Since(stopStarted); elapsed < 900*time.Millisecond {
-		t.Fatalf("integration: stop escalated after %v, before the timeout", elapsed)
-	}
-	integrationWaitForState(t, adapter, longID, domain.ContainerStateExited)
-	if err := adapter.Remove(ctx, longID); err != nil {
-		t.Fatalf("integration: remove long container: %v", err)
 	}
 }
 
@@ -144,21 +159,21 @@ func integrationImage(ctx context.Context, t *testing.T, client *containerdclien
 	return ""
 }
 
-func integrationState(t *testing.T, adapter *Adapter, id domain.ContainerID) domain.ContainerState {
+func integrationState(ctx context.Context, t *testing.T, adapter *Adapter, id domain.ContainerID) domain.ContainerState {
 	t.Helper()
-	state, err := adapter.Status(context.Background(), id)
+	state, err := adapter.Status(ctx, id)
 	if err != nil {
 		t.Fatalf("integration: status %s: %v", id, err)
 	}
 	return state
 }
 
-func integrationWaitForState(t *testing.T, adapter *Adapter, id domain.ContainerID, want domain.ContainerState) {
+func integrationWaitForState(ctx context.Context, t *testing.T, adapter *Adapter, id domain.ContainerID, want domain.ContainerState) {
 	t.Helper()
 	deadline := time.Now().Add(integrationStateWait)
 	last := domain.ContainerStateUnknown
 	for time.Now().Before(deadline) {
-		last = integrationState(t, adapter, id)
+		last = integrationState(ctx, t, adapter, id)
 		if last == want {
 			return
 		}
@@ -176,11 +191,23 @@ func cleanupIntegration(t *testing.T, client *containerdclient.Client, adapter *
 	defer cancel()
 	ctx = namespaces.WithNamespace(ctx, integrationNamespace)
 
+	cleanupCreatedContainers(ctx, t, adapter, created)
+	cleanupAllContainers(ctx, t, client)
+	cleanupAllImages(ctx, t, client)
+	cleanupNamespace(ctx, t, client)
+}
+
+func cleanupCreatedContainers(ctx context.Context, t *testing.T, adapter *Adapter, created []domain.ContainerID) {
+	t.Helper()
 	for _, id := range created {
 		if err := adapter.Remove(ctx, id); err != nil && !errors.Is(err, ErrNotFound) {
 			t.Errorf("integration cleanup: remove container %s: %v", id, err)
 		}
 	}
+}
+
+func cleanupAllContainers(ctx context.Context, t *testing.T, client *containerdclient.Client) {
+	t.Helper()
 	containers, err := client.Containers(ctx)
 	if err != nil {
 		t.Errorf("integration cleanup: list containers: %v", err)
@@ -188,6 +215,10 @@ func cleanupIntegration(t *testing.T, client *containerdclient.Client, adapter *
 	for _, container := range containers {
 		integrationForceRemoveContainer(ctx, t, client, container)
 	}
+}
+
+func cleanupAllImages(ctx context.Context, t *testing.T, client *containerdclient.Client) {
+	t.Helper()
 	images, err := client.ImageService().List(ctx)
 	if err != nil && !errdefs.IsNotFound(err) {
 		t.Errorf("integration cleanup: list images: %v", err)
@@ -197,9 +228,13 @@ func cleanupIntegration(t *testing.T, client *containerdclient.Client, adapter *
 			t.Errorf("integration cleanup: delete image %s: %v", image.Name, err)
 		}
 	}
-	// Containerd's garbage collector removes the deleted image's content blobs
-	// and unpacked layer snapshots asynchronously, so the namespace can only be
-	// deleted once it has settled.
+}
+
+// cleanupNamespace deletes the namespace once containerd's garbage collector
+// has removed the deleted images' content blobs and unpacked layer snapshots
+// asynchronously.
+func cleanupNamespace(ctx context.Context, t *testing.T, client *containerdclient.Client) {
+	t.Helper()
 	deadline := time.Now().Add(integrationCleanupWait)
 	for {
 		err := client.NamespaceService().Delete(ctx, integrationNamespace)
