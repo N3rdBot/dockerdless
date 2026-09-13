@@ -219,14 +219,20 @@ one-shot images such as `hello-world`.
 
 ### Static analysis
 
-`make tools` installs the pinned `golangci-lint` v2.13.2 and
-`markdownlint-cli2` 0.22.1 into `.tools/bin` and `node_modules`; it never
-touches `go.mod`/`go.sum`, so run it once per clone (and after a pin bump).
-`golangci-lint` v2 then runs as part of the gate (`make lint`), with the
-three-group import order enforced by `gci` (using `localmodule`, derived from
-`go.mod`) and the architecture boundaries enforced by `depguard`.
-`make lint-md` runs the Markdown lint. `make verify` still runs `gofmt`,
-`go vet`, and the race-enabled unit tests.
+`make lint` and `make lint-md` **require** the pinned tools installed by
+`make tools`; they never fall back to a system `golangci-lint` or
+`markdownlint-cli2` and instead fail with `run 'make tools'` when a tool is
+missing. `make tools` installs `golangci-lint` v2.13.2 into `.tools/bin` and
+`markdownlint-cli2` 0.22.1 into `node_modules`, verifies each binary reports
+its pinned version, and never touches `go.mod`/`go.sum`, so run it once per
+clone (and after a pin bump). `golangci-lint` v2 then runs as part of the gate
+(`make lint`), with the three-group import order enforced by `gci` (using
+`localmodule`, derived from `go.mod`) and the architecture boundaries enforced
+by `depguard`. `make lint-md` runs the Markdown lint. To deliberately run a
+different binary, override the path explicitly, for example in CI:
+`make lint GOLANGCI_LINT=golangci-lint` or
+`make lint-md MARKDOWNLINT_CLI2=markdownlint-cli2`. `make verify` still runs
+`gofmt`, `go vet`, and the race-enabled unit tests.
 
 ## Cleanup
 
@@ -255,7 +261,7 @@ filter → `iptables-restore` pass that keeps the shared `CNI-HOSTPORT-*`,
 ## Release command set
 
 ```bash
-make tools                                                       # pinned lint tools, once
+make tools                                                       # pinned lint tools; required by make lint/lint-md
 gofmt -l .                                                       # empty output
 go vet ./...
 make lint                                                        # golangci-lint v2

@@ -76,12 +76,12 @@ These are the exact commands. The Makefile targets wrap the ones that matter.
 
 | What you want | Command |
 | --- | --- |
-| Install pinned dev tools | `make tools` (once per clone, then after a pin bump) |
+| Install pinned dev tools | `make tools` (required before linting; once per clone, then after a pin bump) |
 | Format check | `make fmt` (or `gofmt -l .`, must print nothing) |
 | Static analysis | `make vet` (`go vet ./...`) |
-| Go lint | `make lint` (`golangci-lint run ./...`) |
-| Go lint, with auto-fix | `make lint-fix` (`golangci-lint run --fix ./...`) |
-| Markdown lint | `make lint-md` |
+| Go lint | `make lint` (pinned `golangci-lint` from `make tools`) |
+| Go lint, with auto-fix | `make lint-fix` (pinned `golangci-lint` from `make tools`) |
+| Markdown lint | `make lint-md` (pinned `markdownlint-cli2` from `make tools`) |
 | Unit tests | `go test ./...` |
 | Race-enabled unit tests | `go test -race ./...` or `go test -race -count=1 ./...` |
 | Integration tests | `go test -tags=integration ./integration/...` or `make integration` |
@@ -99,13 +99,18 @@ never silently passes, so do not read a skip as a green run. Integration tests
 use the `integration` build tag, so ordinary `go test ./...` does not compile
 them.
 
-Run `make tools` once per clone before linting. It installs the pinned
-`golangci-lint` v2.13.2 into `.tools/bin` and `markdownlint-cli2` 0.22.1 into
-`node_modules` from the committed `package.json`/`package-lock.json`, outside
-the Go module graph, so `go.mod` and `go.sum` stay untouched. The Makefile puts
-those directories first on `PATH`, so `make lint`, `make lint-fix`, and
-`make lint-md` use the pinned versions automatically and point you back to
-`make tools` when a tool is missing.
+Run `make tools` once per clone before linting. `make lint`, `make lint-fix`,
+and `make lint-md` **require** the pinned tools it installs and never fall back
+to a system `golangci-lint` or `markdownlint-cli2`: each target invokes the
+local binary by explicit path and stops with a `run 'make tools'` message when
+it is missing. `make tools` installs the pinned `golangci-lint` v2.13.2 into
+`.tools/bin` and `markdownlint-cli2` 0.22.1 into `node_modules` from the
+committed `package.json`/`package-lock.json`, outside the Go module graph, so
+`go.mod` and `go.sum` stay untouched, then asserts both binaries report the
+pinned versions. To deliberately run a different binary, override the path
+explicitly, for example in CI:
+`make lint GOLANGCI_LINT=golangci-lint` or
+`make lint-md MARKDOWNLINT_CLI2=markdownlint-cli2`.
 
 `make lint` runs `golangci-lint` v2 against the `.golangci.yml` rule set,
 including the three-group import order enforced by `gci`; `make lint-fix`
