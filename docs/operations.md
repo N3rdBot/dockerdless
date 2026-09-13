@@ -234,6 +234,13 @@ different binary, override the path explicitly, for example in CI:
 `make lint-md MARKDOWNLINT_CLI2=markdownlint-cli2`. `make verify` still runs
 `gofmt`, `go vet`, and the race-enabled unit tests.
 
+`make modernize` (part of `make verify`) fails when `go fix -diff` reports
+pending modernizations. It complements `make lint` because `go fix` threads the
+module's Go version into type information: version-gated analyzers fire there but
+are silently skipped by golangci-lint's `modernize` linter. The suggestions are
+check-only, never auto-applied - review each one and compile it before keeping
+the change.
+
 Do not run a system-installed `staticcheck` directly. It is not pinned by this
 repository and a host copy can be too old for the toolchain: a v0.7.0 binary
 fails against go1.27.1 with `export data version 4 is greater than maximum

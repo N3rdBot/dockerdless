@@ -23,7 +23,7 @@ MARKDOWNLINT_CLI2 ?= $(CURDIR)/node_modules/.bin/markdownlint-cli2
 # resolution - decide which lint binaries run.
 export PATH := $(CURDIR)/$(TOOLS_DIR)/bin:$(CURDIR)/node_modules/.bin:$(PATH)
 
-.PHONY: build test vet fmt lint lint-fix lint-md verify integration hooks bench release run clean tools
+.PHONY: build test vet fmt lint lint-fix lint-md modernize verify integration hooks bench release run clean tools
 
 build:
 	mkdir -p $(dir $(BINARY))
@@ -62,8 +62,23 @@ lint-md:
 	$(MARKDOWNLINT_CLI2) "**/*.md"
 
 # verify is the release gate: format, static analysis, race-enabled unit tests.
-verify: fmt vet
+verify: fmt vet modernize
 	$(GO) test -race -count=1 ./...
+
+# `go fix` sees modernizations that golangci-lint's modernize linter cannot:
+# the toolchain threads the module's Go version into type information, so
+# version-gated analyzers fire here but are skipped by golangci-lint. This is a
+# check, never an auto-apply - a `go fix` suggestion is not guaranteed to
+# compile (e.g. its errors.AsType fix for an interface that does not satisfy
+# error), so review each one, apply only what builds, then re-run 'make verify'.
+modernize:
+	@pending="$$($(GO) fix -diff ./... 2>&1)"; status=$$?; \
+	if [ -n "$$pending" ] || [ $$status -ne 0 ]; then \
+		echo "go fix reported pending modernizations (or failed):"; \
+		echo "$$pending"; \
+		echo "review each suggestion, apply only the ones that compile, then re-run 'make verify'"; \
+		exit 1; \
+	fi
 
 integration:
 	$(GO) test -tags=integration -count=1 -v ./integration/...

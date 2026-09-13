@@ -119,6 +119,13 @@ of the pre-PR gate, so run `make verify`, `make lint`, and `make lint-md` before
 you push. See [docs/operations.md](docs/operations.md#static-analysis) for
 details.
 
+`make modernize` (part of `make verify`) fails when `go fix -diff` reports
+pending modernizations. It complements `make lint`: `go fix` threads the module's
+Go version into type information, so version-gated analyzers fire there but are
+silently skipped by golangci-lint's `modernize` linter. Its suggestions are
+check-only, never auto-applied - review each one and compile it before keeping
+the change.
+
 ## Commit convention
 
 This repo uses [Conventional Commits](https://www.conventionalcommits.org/).
