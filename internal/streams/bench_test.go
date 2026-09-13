@@ -36,8 +36,7 @@ func BenchmarkWriterWrite(b *testing.B) {
 	payload := benchmarkPayload(benchmarkFramePayload)
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		writer := NewWriter(io.Discard, Stdout)
 		if _, err := writer.Write(payload); err != nil {
 			b.Fatalf("Write: %v", err)
@@ -51,8 +50,7 @@ func BenchmarkWriterWriteLargeChunk(b *testing.B) {
 	payload := bytes.Repeat([]byte{'x'}, maxWriteChunk+1)
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		writer := NewWriter(io.Discard, Stdout)
 		if _, err := writer.Write(payload); err != nil {
 			b.Fatalf("Write: %v", err)
@@ -67,8 +65,7 @@ func BenchmarkReadFrame(b *testing.B) {
 	framed := benchmarkFrame(payload)
 	b.SetBytes(int64(len(payload)))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		reader := NewReader(bytes.NewReader(framed))
 		frame, err := reader.ReadFrame()
 		if err != nil {
@@ -98,8 +95,7 @@ func BenchmarkDemux(b *testing.B) {
 	encoded := wire.Bytes()
 	b.SetBytes(int64(len(encoded)))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var stdout, stderr bytes.Buffer
 		if _, err := Demux(&stdout, &stderr, bytes.NewReader(encoded)); err != nil {
 			b.Fatalf("Demux: %v", err)
@@ -115,8 +111,7 @@ func BenchmarkDemux(b *testing.B) {
 func BenchmarkParseCRIEntry(b *testing.B) {
 	line := []byte("2026-09-13T10:11:12.123456789Z stdout F container log line payload")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		if _, err := ParseCRIEntry(line); err != nil {
 			b.Fatalf("ParseCRIEntry: %v", err)
 		}
@@ -128,8 +123,7 @@ func BenchmarkParseCRIEntry(b *testing.B) {
 func BenchmarkParseCRIEntryPartial(b *testing.B) {
 	line := []byte("2026-09-13T10:11:12.123456789Z stderr P fragmented log line payload")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		if _, err := ParseCRIEntry(line); err != nil {
 			b.Fatalf("ParseCRIEntry: %v", err)
 		}
@@ -155,8 +149,7 @@ func BenchmarkFindTailStart(b *testing.B) {
 
 	b.SetBytes(int64(content.Len()))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		if _, err := FindTailStart(file, 100); err != nil {
 			b.Fatalf("FindTailStart: %v", err)
 		}
@@ -168,8 +161,7 @@ func BenchmarkFindTailStart(b *testing.B) {
 func BenchmarkDecodeLogLineAutoFallback(b *testing.B) {
 	line := []byte("plain container output without any CRI prefix\n")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		entry, ok := decodeLogLine(line, LogFormatAuto)
 		if !ok || entry.Stream != LogStreamStdout {
 			b.Fatal("auto decode did not fall back to stdout")

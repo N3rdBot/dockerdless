@@ -26,8 +26,7 @@ func sequentialProbe(next *uint16) PortProbe {
 // (requested port 0) that runs for every `-P`/`ExposedPorts` container create.
 func BenchmarkPortAllocatorAllocateDynamic(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var next uint16
 		allocator := NewPortAllocator(WithPortProbe(sequentialProbe(&next)))
 		if _, err := allocator.Allocate("tcp", "0.0.0.0", 0); err != nil {
@@ -40,8 +39,7 @@ func BenchmarkPortAllocatorAllocateDynamic(b *testing.B) {
 // reservation path.
 func BenchmarkPortAllocatorAllocateFixed(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var next uint16
 		allocator := NewPortAllocator(WithPortProbe(sequentialProbe(&next)))
 		if _, err := allocator.Allocate("tcp", "127.0.0.1", 8080); err != nil {
@@ -55,8 +53,7 @@ func BenchmarkPortAllocatorAllocateFixed(b *testing.B) {
 func BenchmarkPortAllocatorAllocateWithExistingReservations(b *testing.B) {
 	const existing = 1024
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var next uint16
 		allocator := NewPortAllocator(WithPortProbe(sequentialProbe(&next)))
 		for port := uint16(30000); port < 30000+existing; port++ {
@@ -86,8 +83,7 @@ func BenchmarkPortAllocatorRelease(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		allocator.Release(allocs...)
 		for _, alloc := range allocs {
 			allocator.used[portKey{alloc.Protocol, alloc.HostIP, alloc.HostPort}] = struct{}{}
@@ -108,8 +104,7 @@ func BenchmarkBuildPortMappings(b *testing.B) {
 		})
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		if _, err := BuildPortMappings(bindings); err != nil {
 			b.Fatalf("BuildPortMappings: %v", err)
 		}
@@ -138,8 +133,7 @@ func BenchmarkPortAllocatorAllocateBindings(b *testing.B) {
 		{HostPort: 0, ContainerPort: 5353, Protocol: "udp"},
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		var next uint16
 		allocator := NewPortAllocator(WithPortProbe(sequentialProbe(&next)))
 		if _, _, err := allocator.AllocateBindings(bindings); err != nil {
