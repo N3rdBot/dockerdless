@@ -60,6 +60,48 @@ The typed Go response always has a non-nil `ExposedPorts` set. On the wire an
 empty set is omitted by the image-config JSON tags, exactly like Docker's
 envelope; a client that ranges over the decoded map is safe either way.
 
+## nerdctl correspondence
+
+dockerdless does **not** invoke the `nerdctl` CLI. The daemon talks to the
+native containerd gRPC API, CNI, and BuildKit directly (ADR-0001); it never
+spawns a `nerdctl` process or parses its output. The table below exists so an
+operator who already knows the `nerdctl` workflow can recognize what each Docker
+API operation does underneath. The third column is the `nerdctl` command that
+produces the same effect on the same host, offered for familiarity and
+migration, not as an implementation detail or a call the daemon makes.
+
+| Docker API operation | dockerdless internal primitive | equivalent `nerdctl` command | testcontainers-go consumer |
+| --- | --- | --- | --- |
+| `POST /containers/create` + `POST /containers/{id}/start` | `containerd Containers.Create` (snapshot + OCI spec), then `Tasks.Start`; CNI `ADD` with `portmap` | `nerdctl run` (or `nerdctl create` then `nerdctl start`) | `DockerProvider.CreateContainer`, `DockerContainer.Start` |
+| `POST /containers/{id}/stop` | `containerd Tasks.Kill` (SIGTERM, then SIGKILL on timeout) | `nerdctl stop` | `DockerContainer.Stop` |
+| `DELETE /containers/{id}` | `containerd Tasks.Delete`, `Containers.Delete`, snapshotter `Remove`; CNI `DEL` | `nerdctl rm` | `DockerContainer.Terminate` |
+| `GET /containers/json` | `containerd Containers.List` + `Tasks.Status` refresh | `nerdctl ps` (add `-a` to include stopped containers) | `DockerProvider.findContainerByName` (reuse) |
+| `GET /containers/{id}/json` | `containerd Containers.Get` + `Tasks.Status`; in-memory registry and saved port bindings | `nerdctl inspect` | `DockerContainer.Inspect`/`State`/`MappedPort` |
+| `GET /containers/{id}/logs` | containerd task IO (`TaskIO`) written as CRI log files, read by `streams.ReadLogs` | `nerdctl logs` | `DockerContainer.Logs`, `wait.ForLog`, `wait.ForHTTP` |
+| `POST /containers/{id}/exec` + `POST /exec/{id}/start` | `containerd Task.Exec` (OCI process spec) + `Process.Start`/`Wait` | `nerdctl exec` | `DockerContainer.Exec`, `wait.ForExec` |
+| `GET /images/json` | `containerd ImageService.List` through the BuildKit adapter | `nerdctl images` | no direct library call; asserted through the Moby client |
+| `GET /images/{name}/json` | `containerd ImageService.Get` + OCI config blob | `nerdctl image inspect` | `DockerClient.ImageInspect` |
+| `POST /images/create` | containerd remote pull + `Unpack` (BuildKit adapter) | `nerdctl pull` | `DockerProvider.PullImage` |
+| `POST /build` | BuildKit `Solve` (`dockerfile.v0`) + image export | `nerdctl build` | `DockerProvider.BuildImage` via `FromDockerfile` |
+| `POST /networks/create` | CNI conflist write (`bridge` + `host-local`) + netlink bridge create | `nerdctl network create` | `Provider.CreateNetwork`, `GenericNetwork` (`network.New`) |
+| `GET /networks`, `GET /networks/{id}` | CNI conflist parse + netlink bridge inspect | `nerdctl network ls` | `DockerProvider.ensureDefaultNetwork`, `GetNetwork` |
+| `DELETE /networks/{id}` | bridge delete + CNI conflist remove | `nerdctl network rm` | `DockerNetwork.Remove` |
+| `GET /_ping`, `HEAD /_ping` | daemon identity (no containerd call) | `-` (nerdctl has no daemon ping; it contacts containerd per command) | `DockerClient.Ping` |
+| `GET /version` | static advertised API `1.44`, minimum `1.24` | `nerdctl version` (reports the containerd server version) | `DockerClient.ServerVersion` |
+| `GET /info` | containerd namespace/snapshotter counters + backend socket paths | `nerdctl info` | `DockerClient.Info` (provider startup) |
+
+### CRI is deferred
+
+The runtime adapter is Docker-shaped and no CRI gRPC service is exposed, so a
+CRI-only environment is not served by this MVP. The deferral, including the
+inert `enable-cri` flag, is recorded in
+[ADR-0002](adr/0002-defer-cri-runtime-adapter.md); the substrate decision is in
+[ADR-0001](adr/0001-native-containerd-primary.md). The intended daemon shape is
+described in
+[proposals/0001-docker-api-daemon-over-containerd.md](proposals/0001-docker-api-daemon-over-containerd.md)
+and
+[design/0001-mvp-daemon.md](design/0001-mvp-daemon.md).
+
 ## Container create field policy
 
 Every field of `container.Config` and `container.HostConfig` (including the
