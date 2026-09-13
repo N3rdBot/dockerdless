@@ -18,6 +18,8 @@ Three process docs back this guide:
 
 - **Go 1.27.1**, the version pinned in [`go.mod`](go.mod). Check with
   `go version`.
+- **Node.js 20+ with npm**, for `make tools`, which installs the pinned
+  `markdownlint-cli2`.
 - **Linux with root (euid 0).** Network namespaces, CNI bridges, and iptables
   rules require it. There is no rootless mode.
 - **containerd** listening on `/run/containerd/containerd.sock`.
@@ -40,6 +42,9 @@ cd dockerdless
 
 # Fetch dependencies.
 go mod download
+
+# Install the pinned developer tools (golangci-lint + markdownlint-cli2) once.
+make tools
 
 # Build the daemon into bin/dockerdless.
 make build
@@ -71,8 +76,12 @@ These are the exact commands. The Makefile targets wrap the ones that matter.
 
 | What you want | Command |
 | --- | --- |
+| Install pinned dev tools | `make tools` (once per clone, then after a pin bump) |
 | Format check | `make fmt` (or `gofmt -l .`, must print nothing) |
 | Static analysis | `make vet` (`go vet ./...`) |
+| Go lint | `make lint` (`golangci-lint run ./...`) |
+| Go lint, with auto-fix | `make lint-fix` (`golangci-lint run --fix ./...`) |
+| Markdown lint | `make lint-md` |
 | Unit tests | `go test ./...` |
 | Race-enabled unit tests | `go test -race ./...` or `go test -race -count=1 ./...` |
 | Integration tests | `go test -tags=integration ./integration/...` or `make integration` |
@@ -90,17 +99,27 @@ never silently passes, so do not read a skip as a green run. Integration tests
 use the `integration` build tag, so ordinary `go test ./...` does not compile
 them.
 
-`make lint` (golangci-lint) is best-effort on this host: the installed binary is
-built with go1.26 and cannot load the go1.27.1 module. `gofmt` and `go vet` are
-the authoritative static gates. See
-[docs/operations.md](docs/operations.md#static-analysis) for details.
+Run `make tools` once per clone before linting. It installs the pinned
+`golangci-lint` v2.13.2 into `.tools/bin` and `markdownlint-cli2` 0.22.1 into
+`node_modules` from the committed `package.json`/`package-lock.json`, outside
+the Go module graph, so `go.mod` and `go.sum` stay untouched. The Makefile puts
+those directories first on `PATH`, so `make lint`, `make lint-fix`, and
+`make lint-md` use the pinned versions automatically and point you back to
+`make tools` when a tool is missing.
+
+`make lint` runs `golangci-lint` v2 against the `.golangci.yml` rule set,
+including the three-group import order enforced by `gci`; `make lint-fix`
+applies its mechanical fixes. `make lint-md` runs the Markdown lint. Lint is part
+of the pre-PR gate, so run `make verify`, `make lint`, and `make lint-md` before
+you push. See [docs/operations.md](docs/operations.md#static-analysis) for
+details.
 
 ## Commit convention
 
 This repo uses [Conventional Commits](https://www.conventionalcommits.org/).
 Write every commit as:
 
-```
+```text
 <type>(<scope>): <short imperative summary>
 
 <optional body explaining why>
@@ -136,7 +155,7 @@ It sets `core.hooksPath=.githooks` and enforces the message format locally.
 
 Cut a branch off `main` and name it by type and topic:
 
-```
+```text
 feat/exec-stream-hijack
 fix/reconcile-exit-time
 docs/operations-troubleshooting
@@ -153,8 +172,8 @@ and keep your history linear.
 2. Branch off `main`.
 3. Make the change, with tests. Follow the
    [definition of done](docs/process/definition-of-done.md).
-4. Run the gates locally: `make verify` and, when you have a backend,
-   `make integration`.
+4. Run the gates locally: `make verify`, `make lint`, `make lint-md`, and, when
+   you have a backend, `make integration`.
 5. Push and open a PR. The
    [PR template](.github/PULL_REQUEST_TEMPLATE.md) loads automatically. Fill
    every section.

@@ -1,0 +1,44 @@
+// markdownlint rule configuration for dockerdless.
+//
+// Philosophy: the docs deliberately use one-sentence-per-line prose, wide
+// compatibility tables, and bold sub-labels in ADR/design templates. Those
+// are intentional style choices, so the affected rules are relaxed here with
+// a reason instead of mass-reformatting the documents. Everything else stays
+// at the markdownlint defaults so real defects (missing fence languages,
+// trailing whitespace, heading structure, table integrity, ...) still fail.
+{
+  // MD013/line-length: docs intentionally keep long prose sentences and wide
+  // tables; wrapping to 80 columns would churn every paragraph without making
+  // the rendered output better. Disabled outright (documented choice).
+  "MD013": false,
+
+  // MD024/no-duplicate-heading: section names such as "Decision",
+  // "Consequences", "Positive" recur under different parents (one ADR per
+  // file, one endpoint per table section); only true sibling duplicates
+  // should fail.
+  "MD024": { "siblings_only": true },
+
+  // MD010/no-hard-tabs: prose must never contain tabs. Fenced Go/YAML samples
+  // are tab-indented by convention (gofmt), so code blocks are exempt from
+  // this rule while prose keeps it.
+  "MD010": { "code_blocks": false },
+
+  // MD033/no-inline-html: the templates use <angle-bracket> placeholders in
+  // prose, plus intentional <!-- guidance --> comments. Comments are not
+  // elements, so allow the placeholder names actually in use and keep flagging
+  // any real HTML element.
+  "MD033": {
+    "allowed_elements": ["short", "what", "alternative", "why", "how"]
+  },
+
+  // MD036/no-emphasis-as-heading: ADR/design/proposal templates use bold
+  // labels ("**Positive**", "**Goals**", "**In scope**") as sub-labels that
+  // are deliberately outside the heading outline. Promoting them to headings
+  // would restructure the documents and change their tables of contents.
+  "MD036": false,
+
+  // MD041/first-line-heading: .github/PULL_REQUEST_TEMPLATE.md intentionally
+  // opens with a guidance HTML comment and uses `##` form sections; GitHub
+  // renders PR templates without a document H1.
+  "MD041": false
+}

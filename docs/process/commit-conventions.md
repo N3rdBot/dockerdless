@@ -55,7 +55,7 @@ The header is one line and has exactly this shape:
   area affected.
 - `!` after the type or after the scope marks a breaking change. See
   [Breaking changes](#breaking-changes).
-- `: ` separates the header from the description. The space after the colon is
+- `:` separates the header from the description. The space after the colon is
   required.
 - `<description>` is the subject. Its rules follow the type table.
 
@@ -119,7 +119,7 @@ name the module or area directly and keep the same shape, for example
 
 ### Subject
 
-The text after `: ` is the subject. It follows five rules.
+The text after `:` is the subject. It follows five rules.
 
 1. **Imperative mood, present tense.** Write the command you are giving the
    codebase: `add`, `end`, `classify`, `wire`. Not `added`, `adds`, `adding`.

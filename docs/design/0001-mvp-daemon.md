@@ -358,7 +358,7 @@ The envelope is a `DockerError` whose `Status` and `Kind` are `json:"-"`, so the
 wire body is exactly `{"message":"..."}` and nothing else
 (`internal/api/errors.go`). `WriteDockerError` sets `Content-Type:
 application/json` and writes the mapped status. `mapServiceError` strips the
-`dockerdless: <kind>: ` sentinel prefix through `cleanServiceMessage`, and an
+`dockerdless: <kind>:` sentinel prefix through `cleanServiceMessage`, and an
 error may carry a Docker-facing message through the `DockerMessage()` interface
 (`app.dockerError`). A `503` constructor, `NewUnavailable`, exists for exhausted
 bounded resources, but no `ports` sentinel currently produces it.

@@ -312,4 +312,3 @@ the trust boundary in [docs/security.md](security.md).
 - [docs/deployment.md](deployment.md): installation and service integration.
 - [docs/security.md](security.md): the socket and telemetry trust boundary.
 - [README.md](../README.md#configuration-reference): the short reference table.
-

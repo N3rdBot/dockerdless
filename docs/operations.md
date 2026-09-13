@@ -219,10 +219,14 @@ one-shot images such as `hello-world`.
 
 ### Static analysis
 
-`golangci-lint` on the recorded verification host is built with go1.26 and
-cannot load this go1.27.1 module. `make verify` therefore runs `gofmt` and
-`go vet`, which are the authoritative static gates. `make lint` remains
-available for hosts with a matching golangci-lint build.
+`make tools` installs the pinned `golangci-lint` v2.13.2 and
+`markdownlint-cli2` 0.22.1 into `.tools/bin` and `node_modules`; it never
+touches `go.mod`/`go.sum`, so run it once per clone (and after a pin bump).
+`golangci-lint` v2 then runs as part of the gate (`make lint`), with the
+three-group import order enforced by `gci` (using `localmodule`, derived from
+`go.mod`) and the architecture boundaries enforced by `depguard`.
+`make lint-md` runs the Markdown lint. `make verify` still runs `gofmt`,
+`go vet`, and the race-enabled unit tests.
 
 ## Cleanup
 
@@ -251,8 +255,11 @@ filter → `iptables-restore` pass that keeps the shared `CNI-HOSTPORT-*`,
 ## Release command set
 
 ```bash
+make tools                                                       # pinned lint tools, once
 gofmt -l .                                                       # empty output
 go vet ./...
+make lint                                                        # golangci-lint v2
+make lint-md                                                     # markdownlint-cli2
 go build ./...
 go test -race -count=1 ./...
 go test -tags=integration -count=1 ./integration/...             # needs root + backends

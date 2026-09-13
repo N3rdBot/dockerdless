@@ -6,7 +6,7 @@ clients and the host.
 
 ## Trust boundary
 
-```
+```text
 Docker client (trusted)
     │  Unix socket, 0660, owned by the daemon uid
     ▼

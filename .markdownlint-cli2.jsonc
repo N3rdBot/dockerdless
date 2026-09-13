@@ -1,0 +1,21 @@
+// markdownlint-cli2 configuration for dockerdless.
+//
+// Rule configuration itself lives in .markdownlint.jsonc (the standard
+// markdownlint config format, honored by markdownlint-cli2); this file only
+// declares scope.
+{
+  // Lint every Markdown file in the repository. markdownlint-cli2 does NOT
+  // honor .gitignore, so every exclusion has to be listed here explicitly.
+  "globs": ["**/*.md"],
+
+  // ...except the entries below.
+  "ignores": [
+    // Agent-local plans/evidence/notepads: working artifacts, not project
+    // documentation, and they must stay unlinted and unmodified.
+    ".omo/**",
+
+    // Built binaries and vendored dependencies.
+    "bin/**",
+    "node_modules/**"
+  ]
+}
